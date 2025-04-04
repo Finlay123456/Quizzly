@@ -218,8 +218,8 @@ const PlayQuiz = () => {
     };
   
     try {
-      // Send score to lobby if there's a lobby code in the URL
-      
+      // Only proceed if we have a valid lobby code
+      if (lobbyCode && lobbyCode.length === 6) {
         const response = await fetch(`http://localhost:5001/api/lobbies/${lobbyCode}/submit-score`, {
           method: 'POST',
           headers: {
@@ -237,17 +237,31 @@ const PlayQuiz = () => {
   
         const data = await response.json();
         if (!data.success) {
-          console.error("Failed to submit score:", data.error);
+          throw new Error(data.error || 'Failed to submit score');
         }
-      
+        
+        // Only navigate after successful save
+        navigate(`/results/${lobbyCode}`, { 
+          state: results 
+        });
+        return; // Exit after successful navigation
+      }
+  
+      // If no lobby code, navigate to regular results page
+      navigate(`/results/${quizId}`, { 
+        state: results 
+      });
+  
     } catch (error) {
       console.error("Failed to submit score to lobby:", error);
+      // If submission fails, still navigate to results but show error
+      navigate(`/results/${quizId}${lobbyCode ? `/${lobbyCode}` : ''}`, { 
+        state: { 
+          ...results, 
+          error: "Failed to save to lobby" 
+        } 
+      });
     }
-  
-    // Navigate to results page after a delay
-    /*navigationTimeoutRef.current = setTimeout(() => {
-      navigate(`/results/${quizId}`, { state: results });
-    }, 3000);*/
   };
 
   // Format time

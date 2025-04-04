@@ -414,6 +414,82 @@ int main() {
         }
     });
 
+    svr.Post(R"(/api/lobbies/([A-Za-z0-9]{6})/submit-score)", [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            // 1. Extract and validate lobby code with explicit conversion
+            if (req.matches.size() < 2) {
+                throw std::runtime_error("Missing lobby code in URL");
+            }
+            
+            std::string lobby_code(req.matches[1].first, req.matches[1].second); // Explicit conversion
+            if (lobby_code.empty() || lobby_code.length() != 6) {
+                throw std::runtime_error("Invalid lobby code - must be 6 characters");
+            }
+    
+            // 2. Parse and validate request body
+            auto doc = bsoncxx::from_json(req.body);
+            auto view = doc.view();
+    
+            if (!view["nickname"] || view["nickname"].type() != bsoncxx::type::k_string ||
+                !view["score"] || view["score"].type() != bsoncxx::type::k_int32) {
+                throw std::runtime_error("Missing or invalid nickname/score");
+            }
+    
+            // Explicit string conversion for nickname
+            bsoncxx::stdx::string_view nickname_sv = view["nickname"].get_string();
+            std::string nickname(nickname_sv.data(), nickname_sv.length());
+            int32_t score = view["score"].get_int32().value;
+    
+            // 3. Database operations
+            mongocxx::client client{mongocxx::uri{MONGODB_URI}};
+            auto collection = client["Quiz_App_DB"]["QuizResults"];
+    
+            // Create score document with explicit string conversion
+            auto score_doc = bsoncxx::builder::basic::make_document(
+                bsoncxx::builder::basic::kvp("nickname", nickname),
+                bsoncxx::builder::basic::kvp("score", score)
+            );
+    
+            // Upsert operation
+            auto update_result = collection.update_one(
+                bsoncxx::builder::basic::make_document(
+                    bsoncxx::builder::basic::kvp("lobbyCode", lobby_code)
+                ),
+                bsoncxx::builder::basic::make_document(
+                    bsoncxx::builder::basic::kvp("$setOnInsert",
+                        bsoncxx::builder::basic::make_document(
+                            bsoncxx::builder::basic::kvp("lobbyCode", lobby_code)
+                        )
+                    ),
+                    bsoncxx::builder::basic::kvp("$push",
+                        bsoncxx::builder::basic::make_document(
+                            bsoncxx::builder::basic::kvp("scores", score_doc)
+                        )
+                    )
+                ),
+                mongocxx::options::update().upsert(true)
+            );
+    
+            // 4. Return response
+            auto response = bsoncxx::builder::basic::make_document(
+                bsoncxx::builder::basic::kvp("success", true),
+                bsoncxx::builder::basic::kvp("lobbyCode", lobby_code),
+                bsoncxx::builder::basic::kvp("action",
+                    update_result->upserted_id() ? "created" : "updated")
+            );
+    
+            res.set_content(bsoncxx::to_json(response), "application/json");
+    
+        } catch (const std::exception& e) {
+            auto error = bsoncxx::builder::basic::make_document(
+                bsoncxx::builder::basic::kvp("success", false),
+                bsoncxx::builder::basic::kvp("error", std::string(e.what())) // Explicit conversion
+            );
+            res.set_content(bsoncxx::to_json(error), "application/json");
+            res.status = 500;
+        }
+    });
+
     svr.Get(R"(/api/lobbies/([A-Z0-9]{6}))", [&](const httplib::Request& req, httplib::Response& res) {
         try {
             std::string lobby_id = req.matches[1];

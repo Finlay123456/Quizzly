@@ -59,17 +59,22 @@ const Dashboard = () => {
 
   const handlePlayQuiz = async (quizId) => {
     try {
+      const username = prompt("Choose your nickname:");
+      if (!username || username.trim() === "") {
+        alert("You must enter a nickname to play!");
+        return;
+      }
+  
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/lobbies`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           quiz_id: quizId,
-          host_id: currentUser?.uid || "anonymous"   
+          host_id: username   // 👈 USE THE nickname as the host_id
         })
       });
   
       const res = await response.json();
-  
       if (!res.success) {
         throw new Error(res.error || 'Failed to create lobby');
       }
@@ -77,7 +82,7 @@ const Dashboard = () => {
       const lobbyId = res.lobby_id;
   
       sessionStorage.setItem('quizzlyPlayer', JSON.stringify({
-        nickname: currentUser?.displayName || "anonymous",
+        nickname: username,
         gameCode: lobbyId
       }));
   

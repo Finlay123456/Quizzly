@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import './GameLobby.css';
 
@@ -11,6 +11,24 @@ const GameLobby = () => {
   const [playerNickname, setPlayerNickname] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [countdown, setCountdown] = useState(null);
+  const ws = useRef(null);
+
+
+  const fetchLobbyData = async () => {
+    try {
+      const lobbyResponse = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/lobbies/${lobbyCode}`);
+      if (!lobbyResponse.ok) throw new Error('Failed to load lobby');
+      const data = await lobbyResponse.json();
+  
+      setHostInfo({
+        name: data.host_id || 'Quiz Host',
+        avatar: '👨‍🏫'
+      });
+    } catch (error) {
+      console.error('Error fetching lobby:', error);
+    }
+  };
+  
 
   useEffect(() => {
     const storedPlayer = sessionStorage.getItem('quizzlyPlayer');
@@ -49,46 +67,51 @@ const GameLobby = () => {
     };
 
     fetchQuizData();
+    fetchLobbyData();
 
-    const ws = new WebSocket(`ws://${window.location.hostname}:9002`);
+    ws.current = new WebSocket(`ws://${window.location.hostname}:9002`);
 
-    ws.onopen = () => {
+    ws.current.onopen = () => {
       console.log('✅ Connected to WebSocket server');
 
-      ws.send(JSON.stringify({
+      ws.current.send(JSON.stringify({
         lobby_id: lobbyCode,       // 6-character lobby code
         user_id: playerData.nickname,
         action: "join"
       }));
     };
 
-    ws.onmessage = (event) => {
+    ws.current.onmessage = (event) => {
       const message = JSON.parse(event.data);
       console.log('📩 Message from server:', message);
-
+    
       if (message.action === "player_joined" || message.action === "player_left") {
         if (message.players && Array.isArray(message.players)) {
           setPlayers(message.players.map(playerNickname => ({
-            id: Date.now() + Math.random(), // Unique id
+            id: Date.now() + Math.random(),
             nickname: playerNickname,
             avatar: '😎',
-            isReady: false,
             isYou: playerNickname === playerData.nickname
           })));
         }
       }
+    
+      else if (message.action === "start_game") {
+        startCountdown();
+      }
     };
+    
 
-    ws.onerror = (err) => {
+    ws.current.onerror = (err) => {
       console.error('❌ WebSocket error:', err);
     };
 
-    ws.onclose = () => {
+    ws.current.onclose = () => {
       console.warn('⚡ WebSocket closed');
     };
 
     return () => {
-      ws.close();
+      ws.current.close();
     };
   }, [quizId, lobbyCode, navigate]);
 
@@ -190,31 +213,33 @@ const GameLobby = () => {
         </div>
 
         <div className="lobby-sidebar">
-          <div className="player-info">
-            <div className="player-avatar large">{currentPlayer.avatar || '😎'}</div>
-            <h3 className="player-name">{playerNickname}</h3>
-            {/*}
-            <div className={`player-status-badge ${currentPlayer.isReady ? 'ready' : ''}`}>
-              {currentPlayer.isReady ? 'Ready to Play' : 'Not Ready'}
-            </div>
-          </div>
+  <div className="player-info">
+    <div className="player-avatar large">{currentPlayer.avatar || '😎'}</div>
+    <h3 className="player-name">{playerNickname}</h3>
+  </div>
 
-          <div className="lobby-actions">
-            }
-            <button
-              className={`btn ${currentPlayer.isReady ? 'btn-outline' : 'btn-primary'} btn-block`}
-              onClick={toggleReady}
-            >
-              {currentPlayer.isReady ? 'Cancel Ready' : 'Ready Up'}
-            </button>
+  <div className="lobby-actions">
+    {playerNickname === hostInfo.name && (
+      <button
+        className="btn btn-primary btn-block"
+        onClick={() => {
+          if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+            console.log("✅ Sending start_game event to server...");
+            ws.current.send(JSON.stringify({
+              lobby_id: lobbyCode,
+              action: "start_game"
+            }));
+          } else {
+            console.error('WebSocket not ready');
+          }
+        }}      
+      >
+        Start Game
+      </button>
+    )}
 
-            <button
-              className="btn btn-outline btn-block"
-              onClick={leaveGame}
-            >
-              Leave Game
-            </button>*/}
-          </div>
+
+  </div>
 
           <div className="lobby-rules">
             <h3>How to Play</h3>

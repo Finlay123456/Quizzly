@@ -94,7 +94,7 @@ class LobbyManager {
 
         // Only preload lobbies that are still 'waiting' (game not started)
         auto cursor = collection.find(bsoncxx::builder::stream::document{} 
-            << "status" << "waiting"
+           // << "status" << "waiting"
             << bsoncxx::builder::stream::finalize);
 
         for (auto&& doc : cursor) {
@@ -124,9 +124,17 @@ class LobbyManager {
         std::cerr << "❌ Error preloading lobbies: " << e.what() << std::endl;
     }
 }
+#include <boost/beast.hpp>
+#include <boost/asio.hpp>
+#include <mongocxx/client.hpp>
+#include <bsoncxx/json.hpp>
+#include <mutex>
+#include <thread>
 
-
-
+namespace net = boost::asio;
+using tcp = net::ip::tcp;
+namespace beast = boost::beast;
+namespace websocket = beast::websocket;
 
 void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
     try {
@@ -142,9 +150,11 @@ void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
                     websocket::stream<tcp::socket> ws{std::move(socket)};
                     ws.accept();
 
+                    // Read initial message
                     beast::flat_buffer buffer;
                     ws.read(buffer);
                     
+                    // Parse initial join message
                     auto doc = bsoncxx::from_json(beast::buffers_to_string(buffer.data()));
                     auto view = doc.view();
                     
@@ -186,7 +196,7 @@ void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
                             std::cerr << "DB update error: " << e.what() << std::endl;
                         }
 
-                        // Broadcast update
+                        // Broadcast player join
                         auto response = bsoncxx::builder::stream::document{}
                             << "action" << "player_joined"
                             << "lobby_id" << lobby_id
@@ -202,11 +212,28 @@ void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
                         
                         lobby->broadcast(bsoncxx::to_json(response));
 
-                        // Keep connection alive
+                        // Message handling loop
                         try {
                             while(true) {
                                 beast::flat_buffer loop_buffer;
                                 player_ws->read(loop_buffer);
+                                
+                                // Parse incoming message
+                                auto loop_doc = bsoncxx::from_json(
+                                    beast::buffers_to_string(loop_buffer.data())
+                                );
+                                auto loop_view = loop_doc.view();
+                                std::string loop_action = std::string(loop_view["action"].get_string().value);
+
+                                if(loop_action == "start_game") {
+                                    // Verify host privileges if needed
+                                    auto start_response = bsoncxx::builder::stream::document{}
+                                        << "action" << "start_game"
+                                        << "lobby_id" << lobby_id
+                                        << bsoncxx::builder::stream::finalize;
+
+                                    lobby->broadcast(bsoncxx::to_json(start_response));
+                                }
                             }
                         } catch(const beast::system_error& se) {
                             if(se.code() == websocket::error::closed) {
@@ -234,6 +261,7 @@ void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
                                     std::cerr << "DB update error: " << e.what() << std::endl;
                                 }
 
+                                // Broadcast player leave
                                 auto leave_response = bsoncxx::builder::stream::document{}
                                     << "action" << "player_left"
                                     << "lobby_id" << lobby_id
@@ -246,19 +274,17 @@ void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
                                         }
                                     << bsoncxx::builder::stream::close_array
                                     << bsoncxx::builder::stream::finalize;
-                                
+
                                 lobby->broadcast(bsoncxx::to_json(leave_response));
                             }
                         }
                     }
-                } 
-                catch(const std::exception& e) {
+                } catch(const std::exception& e) {
                     std::cerr << "WebSocket error: " << e.what() << std::endl;
                 }
             }).detach();
         }
-    } 
-    catch(const std::exception& e) {
+    } catch(const std::exception& e) {
         std::cerr << "WebSocket server error: " << e.what() << std::endl;
     }
 }

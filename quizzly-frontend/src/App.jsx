@@ -15,9 +15,13 @@ import CreateQuiz from './pages/CreateQuiz';
 import EditQuiz from './pages/EditQuiz';
 
 function AppContent() {
+  const location = useLocation();
+  const hideNavbarRoutes = ['/login', '/register', '/'];
+  const shouldHideNavbar = hideNavbarRoutes.includes(location.pathname);
+
   return (
     <div className="app">
-      {<Navbar />}
+      {!shouldHideNavbar && <Navbar />}
       <main className="main-content">
         <Routes>
           <Route path="/" element={<Home />} />
@@ -26,7 +30,7 @@ function AppContent() {
           <Route path="/register" element={<Register />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/create-quiz" element={<CreateQuiz />} />
-          <Route path="/game-lobby/:id" element={<GameLobby />} />
+          <Route path="/game-lobby/:id/:lobby" element={<GameLobby />} />
           <Route path="/edit-quiz/:id" element={<EditQuiz />} />
           <Route path="/home" element={<Home />} />
           <Route path="*" element={<div>Page not found</div>} />

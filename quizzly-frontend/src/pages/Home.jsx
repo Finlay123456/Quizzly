@@ -4,10 +4,38 @@ import { useAuth } from '../context/AuthContext';
 
 const Home = () => {
   const { currentUser } = useAuth();
+
+  // Simple local nav bar for Home page
+const HomeNavbar = () => (
+  <nav style={{ 
+    display: 'flex', 
+    justifyContent: 'space-between', 
+    alignItems: 'center',
+    padding: '1rem 2rem', 
+    backgroundColor: '#ffffff', 
+    borderBottom: '1px solid #ddd' 
+  }}>
+    <h1 style={{ margin: 0 }}>Quizzly</h1>
+    <Link 
+      to="/login" 
+      style={{ 
+        textDecoration: 'none', 
+        backgroundColor: '#007bff', 
+        color: '#fff', 
+        padding: '0.5rem 1rem', 
+        borderRadius: '5px',
+        fontWeight: 'bold'
+      }}
+    >
+      Log In
+    </Link>
+  </nav>
+);
   
   return (
     
     <div className="home">
+      <HomeNavbar />
       {/* Hero Section */}
       <section className="hero">
         <div className="hero-content">

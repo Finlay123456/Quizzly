@@ -1,12 +1,8 @@
 #include <iostream>
-#include <unistd.h> // For fork()
-#include <thread>   // For std::thread
-#include <vector>   // For std::vector
-#include <mutex>    // For std::mutex
-#include <cstdlib>  // For srand(), rand()
-#include <ctime>    // For time()
-
-// header files
+#include <unordered_map>
+#include <set>
+#include <mutex>
+#include <thread>
 #include "httplib.h"
 #include "createQuiz.h"
 #include "register.h"
@@ -14,296 +10,301 @@
 #include "login.h"
 #include "getQuizzes.h"
 #include "mongo_instance.h"
-
+#include <boost/beast/core.hpp>
+#include <boost/beast/websocket.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <mongocxx/client.hpp>
 #include <mongocxx/instance.hpp>
 #include <mongocxx/uri.hpp>
 #include <bsoncxx/json.hpp>
 #include <bsoncxx/builder/stream/document.hpp>
 #include <bsoncxx/oid.hpp>
-#include <unordered_map>
-#include <string>
-#include <sys/types.h>
 
-// structure to store information about an active game session (each active session is a process and has unique pID)
-struct GameSessionInfo
-{
-    pid_t pid;
+namespace beast = boost::beast;
+namespace websocket = beast::websocket;
+namespace net = boost::asio;
+using tcp = net::ip::tcp;
+
+mongocxx::instance instance{};
+
+std::string generate_lobby_code() {
+    static const char alphanum[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "0123456789";
+
+    std::string code;
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> distrib(0, sizeof(alphanum) - 2);
+
+    for (int i = 0; i < 6; ++i) {
+        code += alphanum[distrib(gen)];
+    }
+
+    return code;
+}
+
+// Lobby structure and manager
+struct GameLobby {
+    std::string id;
+    std::string quiz_id;
+    std::string host_id;
+    std::set<std::shared_ptr<websocket::stream<tcp::socket>>> players;
+    std::mutex mutex;
+    
+    void broadcast(const std::string& message) {
+        std::lock_guard<std::mutex> lock(mutex);
+        for(auto& player : players) {
+            player->write(net::buffer(message));
+        }
+    }
 };
 
-// Global map and mutex to store active game sessions
-std::unordered_map<std::string, GameSessionInfo> activeGames;
-std::mutex activeGamesMutex;
-
-// helper function to generate a 6-digit game code
-std::string generateGameCode()
-{
-    // Use current time as seed (for simplicity; in production, improve uniqueness)
-    // srand(time(NULL)); // move to main method
-    int code = 100000 + rand() % 900000;
-    return std::to_string(code);
-}
-
-// helper function to check if the game code generated is already in use
-std::string generateUniqueGameCode()
-{
-    std::string code;
-    while (true)
-    {
-        code = generateGameCode(); // generates a code
-        {
-            std::lock_guard<std::mutex> lock(activeGamesMutex);
-
-            // checks if the code is already in use
-            if (activeGames.find(code) == activeGames.end())
-            {
-                break;
-            }
+class LobbyManager {
+    public:
+        std::shared_ptr<GameLobby> create_lobby(const std::string& quiz_id, const std::string& host_id) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto lobby = std::make_shared<GameLobby>();
+            lobby->id = generate_lobby_code(); // <-- ✅ 6-digit code generated here
+            lobby->quiz_id = quiz_id;
+            lobby->host_id = host_id;
+            lobbies_[lobby->id] = lobby;
+            return lobby;
         }
-    }
-    return code; // returns a unique game code
-}
-
-// for testing, replace with dynamic behavior 
-void runGameSession(const std::string &gameCode)
-{
-    // print statement for debugging
-    std::cout << "Game session started for game code " << gameCode
-              << " in child process " << getpid() << "\n";
-
-    // Simulate a lobby period, when other users will join
-    // can remove ability to start game in frontend, this will be handled here
-    std::this_thread::sleep_for(std::chrono::seconds(30));
-
-    // Simulate starting the game by creating threads for each joined player
-
-    // SAMPLE DATA - will remove and replace with logic for multithreading
-
-    int simulatedPlayers = 3;
-    std::vector<std::thread> playerThreads;
-    for (int i = 0; i < simulatedPlayers; i++)
-    {
-        // add players to the player thread (game code and index pairing)
-        playerThreads.emplace_back([gameCode, i]()
-                                   {
-            std::cout << "Player thread " << i << " in game " << gameCode 
-                      << " started in process " << getpid() << "\n";
-            std::this_thread::sleep_for(std::chrono::seconds(5)); // here, threads are put to sleep to simulate player activity
-            std::cout << "Player thread " << i << " in game " << gameCode 
-                      << " ended\n"; });
-    }
-
-    // wait for all player threads to finish
-    for (auto &t : playerThreads)
-    {
-        // a thread that has finished execution, but has not yet been joined is considered an active thread of execution and is joinable
-        if (t.joinable())
-        {
-            t.join(); // join a thread if joinable
+    
+        std::shared_ptr<GameLobby> get_lobby(const std::string& id) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = lobbies_.find(id);
+            return (it != lobbies_.end()) ? it->second : nullptr;
         }
-    }
+    
+    private:
+        std::mutex mutex_;
+        std::unordered_map<std::string, std::shared_ptr<GameLobby>> lobbies_;
+    };
+// WebSocket server implementation
+void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
+    try {
+        net::io_context ioc{1};
+        tcp::acceptor acceptor{ioc, {tcp::v4(), port}};
 
-    std::cout << "Game session for game code " << gameCode
-              << " ended in process " << getpid() << "\n";
-    exit(0); // End the child process when done.
+        while(true) {
+            tcp::socket socket{ioc};
+            acceptor.accept(socket);
+
+            std::thread([&lobby_manager, socket = std::move(socket)]() mutable {
+                try {
+                    websocket::stream<tcp::socket> ws{std::move(socket)};
+                    ws.accept();
+
+                    beast::flat_buffer buffer;
+                    ws.read(buffer);
+                    
+                    auto doc = bsoncxx::from_json(beast::buffers_to_string(buffer.data()));
+                    auto view = doc.view();
+                    
+                    std::string lobby_id{view["lobby_id"].get_string().value};
+                    std::string user_id{view["user_id"].get_string().value};
+                    std::string action{view["action"].get_string().value};
+
+                    auto lobby = lobby_manager.get_lobby(lobby_id);
+                    if(!lobby) {
+                        ws.close(websocket::close_code::normal);
+                        return;
+                    }
+
+                    if(action == "join") {
+                        std::lock_guard<std::mutex> lock(lobby->mutex);
+                        lobby->players.insert(std::make_shared<websocket::stream<tcp::socket>>(std::move(ws)));
+                        
+                        // Notify all players
+                        auto response = bsoncxx::builder::stream::document{}
+                            << "action" << "player_joined"
+                            << "lobby_id" << lobby_id
+                            << "player_count" << static_cast<int>(lobby->players.size())
+                            << bsoncxx::builder::stream::finalize;
+                        
+                        lobby->broadcast(bsoncxx::to_json(response));
+                    }
+                } 
+                catch(const std::exception& e) {
+                    std::cerr << "WebSocket error: " << e.what() << std::endl;
+                }
+            }).detach();
+        }
+    } 
+    catch(const std::exception& e) {
+        std::cerr << "WebSocket server error: " << e.what() << std::endl;
+    }
 }
 
-int main()
-{
-    // one global instance
-    // mongocxx::instance instance{};
-
-    // moved here, should produce more unqiue game codes
-    srand(time(NULL));
+int main() {
+    LobbyManager lobby_manager;
+    
+    // Start WebSocket server
+    std::thread ws_thread([&lobby_manager]{
+        run_websocket_server(lobby_manager, 9002);
+    });
 
     httplib::Server svr;
 
     // Set CORS headers
-    svr.set_default_headers({{"Access-Control-Allow-Origin", "*"},
-                             {"Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS"},
-                             {"Access-Control-Allow-Headers", "Content-Type"}});
+    svr.set_default_headers({
+        {"Access-Control-Allow-Origin", "*"},
+        {"Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS"},
+        {"Access-Control-Allow-Headers", "Content-Type"}
+    });
 
     // Handle OPTIONS requests
-    svr.Options(R"(.*)", [](const httplib::Request &, httplib::Response &res)
-                { res.status = 200; });
+    svr.Options(R"(.*)", [](const httplib::Request&, httplib::Response& res) {
+        res.status = 200;
+    });
 
-    // Test endpoint
-    svr.Get("/api/data", [](const httplib::Request &, httplib::Response &res)
-            { res.set_content(R"({"message": "Hello from C++ Backend!"})", "application/json"); });
+    // Existing endpoints
+    svr.Get("/api/data", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(R"({"message": "Hello from C++ Backend!"})", "application/json");
+    });
 
-    // Get all quizzes endpoint
-    svr.Get("/api/quizzes", [](const httplib::Request &, httplib::Response &res)
-            {
+    svr.Get("/api/quizzes", [](const httplib::Request&, httplib::Response& res) {
         std::string quizzes = getAllQuizzes();
-        res.set_content(quizzes, "application/json"); });
+        res.set_content(quizzes, "application/json");
+    });
 
-    // Create quiz endpoint
-    svr.Post("/api/create-quiz", [](const httplib::Request &req, httplib::Response &res)
-             {
+    svr.Post("/api/create-quiz", [](const httplib::Request& req, httplib::Response& res) {
         bool success = createQuiz(req.body);
         std::string jsonResponse = success 
             ? R"({"success": true})" 
             : R"({"success": false, "error": "Failed to create quiz"})";
-        res.set_content(jsonResponse, "application/json"); });
+        res.set_content(jsonResponse, "application/json");
+    });
 
-    // User registration endpoint
-    svr.Post("/api/register", [](const httplib::Request &req, httplib::Response &res)
-             {
-        
+    svr.Post("/api/register", [](const httplib::Request& req, httplib::Response& res) {
         bool success = registerUser(req.body);
         std::string jsonResponse = success 
             ? R"({"success": true})" 
             : R"({"success": false, "error": "Failed to register user"})";
-        
-        res.set_content(jsonResponse, "application/json"); });
+        res.set_content(jsonResponse, "application/json");
+    });
 
-    // GET quiz by title
-    // GET qui by ID (instead of by title)
-    svr.Get(R"(/api/quiz/id/([a-f0-9]{24}))", [](const httplib::Request &req, httplib::Response &res)
-            {
-            std::string quizId = req.matches[1];
-            try {
-            mongocxx::uri uri("mongodb+srv://ngelbloo:jxdnXevSBkquhl2E@se3313-cluster.7kcvssw.mongodb.net/");
-            mongocxx::client client(uri);
-            auto db = client["Quiz_App_DB"];
-            auto collection = db["Quizzes"];
-
-    // Convert string ID to MongoDB ObjectId
+    svr.Get(R"(/api/quiz/id/([a-f0-9]{24}))", [](const httplib::Request& req, httplib::Response& res) {
+        std::string quizId = req.matches[1];
+        try {
+            mongocxx::client client{mongocxx::uri{"mongodb+srv://ngelbloo:jxdnXevSBkquhl2E@se3313-cluster.7kcvssw.mongodb.net/"}};
+            auto collection = client["Quiz_App_DB"]["Quizzes"];
             bsoncxx::oid oid(quizId);
-            auto result = collection.find_one(
-            bsoncxx::builder::stream::document{} << "_id" << oid << bsoncxx::builder::stream::finalize
-            );
+            auto result = collection.find_one(bsoncxx::builder::stream::document{} 
+                << "_id" << oid 
+                << bsoncxx::builder::stream::finalize);
 
-            if (result) {
-                std::string jsonStr = bsoncxx::to_json(result->view());
-                res.set_content(R"({"success": true, "quiz": )" + jsonStr + "}", "application/json");
+            if(result) {
+                res.set_content(R"({"success": true, "quiz": )" + bsoncxx::to_json(result->view()) + "}", "application/json");
             } else {
                 res.set_content(R"({"success": false, "error": "Quiz not found"})", "application/json");
             }
-             } catch (const std::exception &e) {
+        } 
+        catch(const std::exception& e) {
             res.set_content(std::string(R"({"success": false, "error": ")") + e.what() + R"("})", "application/json");
-             } });
+        }
+    });
 
-    // PUT endpoint to edit fields in a Quizzes table entry
-    svr.Put("/api/edit-quiz", [](const httplib::Request &req, httplib::Response &res)
-            {
+    svr.Put("/api/edit-quiz", [](const httplib::Request& req, httplib::Response& res) {
         try {
-            // Parse the incoming JSON using bsoncxx
             auto doc = bsoncxx::from_json(req.body);
             auto view = doc.view();
             
-            // Check for either "id" or "_id" field
-            if (!view["id"] && !view["_id"]) {
-                res.set_content(
-                    R"({"success": false, "error": "Missing quiz ID in request body"})", 
-                    "application/json"
-                );
+            if(!view["id"] && !view["_id"]) {
+                res.set_content(R"({"success": false, "error": "Missing quiz ID"})", "application/json");
                 return;
             }
-    
-            // Update the quiz using the ID
+            
             bool success = updateQuiz(req.body);
-            
-            std::string jsonResponse = success 
+            res.set_content(success 
                 ? R"({"success": true})" 
-                : R"({"success": false, "error": "Failed to update quiz. Quiz may not exist or no changes were made."})";
-            
-            res.set_content(jsonResponse, "application/json");
-        } catch (const std::exception &e) {
-            res.set_content(
-                std::string(R"({"success": false, "error": ")") + e.what() + R"("})",
-                "application/json"
-            );
-            res.status = 400; // Bad Request
-        } });
+                : R"({"success": false, "error": "Update failed"})", "application/json");
+        } 
+        catch(const std::exception& e) {
+            res.set_content(std::string(R"({"success": false, "error": ")") + e.what() + R"("})", "application/json");
+        }
+    });
 
-    // User login endpoint
-    svr.Post("/api/login", [](const httplib::Request &req, httplib::Response &res)
-             {
+    svr.Post("/api/login", [](const httplib::Request& req, httplib::Response& res) {
         bool success = loginUser(req.body);
         std::string jsonResponse = success 
             ? R"({"success": true})" 
             : R"({"success": false, "error": "Failed to login"})";
-        res.set_content(jsonResponse, "application/json"); });
+        res.set_content(jsonResponse, "application/json");
+    });
 
-    // Start Game endpoint (host starts a game)
-    svr.Post("/api/start-game", [](const httplib::Request &req, httplib::Response &res)
-             {
-        // confirm the method is being called
-        std::cout << "POST /api/start-game called" << std::endl;
-        
-        // Generate a unique game code, used by other players to join 
-        std::string gameCode = generateUniqueGameCode();
+    svr.Post("/api/lobbies", [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            auto doc = bsoncxx::from_json(req.body);
+            auto view = doc.view();
+    
+            std::string quiz_id{view["quiz_id"].get_string().value};
+            std::string host_id{view["host_id"].get_string().value};
+    
+            auto lobby = lobby_manager.create_lobby(quiz_id, host_id); // Generates 6-digit code (BQZMGK)
+    
+            mongocxx::client client{mongocxx::uri{"mongodb+srv://ngelbloo:jxdnXevSBkquhl2E@se3313-cluster.7kcvssw.mongodb.net/?retryWrites=true&w=majority"}};
+            auto collection = client["Quiz_App_DB"]["Lobbies"];
+    
+            auto lobby_doc = bsoncxx::builder::stream::document{}
+                << "_id" << lobby->id            // 🧠 6-digit code AS the Mongo _id
+                << "quiz_id" << quiz_id
+                << "host_id" << host_id
+                << "status" << "waiting"
+                << "created_at" << bsoncxx::types::b_date(std::chrono::system_clock::now())
+                << bsoncxx::builder::stream::finalize;
+    
+            collection.insert_one(lobby_doc.view());
+    
+            auto response = bsoncxx::builder::stream::document{}
+                << "success" << true
+                << "lobby_id" << lobby->id  // Return the 6-digit code to frontend
+                << bsoncxx::builder::stream::finalize;
+    
+            res.set_content(bsoncxx::to_json(response), "application/json");
+        }
+        catch (const std::exception& e) {
+            auto error = bsoncxx::builder::stream::document{}
+                << "success" << false
+                << "error" << e.what()
+                << bsoncxx::builder::stream::finalize;
+            res.set_content(bsoncxx::to_json(error), "application/json");
+        }
+    });
+    
 
-        // Fork a new process: the host's game session
-        pid_t pid = fork(); // creates a duplicate of the parent process, this creates a child process (where the game executes) 
+    // 🧠 Fetch lobby by 6-character game code
+svr.Get(R"(/api/lobbies/([A-Z0-9]{6}))", [&](const httplib::Request& req, httplib::Response& res) {
+    try {
+        std::string lobby_id = req.matches[1];
         
-        // check if fork() call was successful, or if fork failed (pid<0)
-        if (pid < 0) {
-            res.set_content(R"({"success": false, "error": "Fork failed"})", "application/json");
-            return;
-        } else if (pid == 0) {
-            // when pid == 0, we are inside the child process
-            runGameSession(gameCode); // run the child process logic 
+        mongocxx::client client{mongocxx::uri{"mongodb+srv://ngelbloo:jxdnXevSBkquhl2E@se3313-cluster.7kcvssw.mongodb.net/?retryWrites=true&w=majority"}};
+        auto collection = client["Quiz_App_DB"]["Lobbies"];
+
+        auto result = collection.find_one(bsoncxx::builder::stream::document{}
+            << "_id" << lobby_id
+            << bsoncxx::builder::stream::finalize);
+
+        if (result) {
+            res.set_content(bsoncxx::to_json(result->view()), "application/json");
         } else {
-            // when pid > 0, we are inside the parent process
-            {
-                std::lock_guard<std::mutex> lock(activeGamesMutex);
-                activeGames[gameCode] = GameSessionInfo{pid};
-            }
-            std::cout << "Started game session with code " << gameCode 
-                      << " in child process " << pid << "\n";
-            res.set_content(R"({"success": true, "gameCode": ")" + gameCode + R"("})", "application/json");
-        } });
-
-    // Join Game endpoint (player joins an existing game)
-    svr.Post("/api/join-game", [](const httplib::Request &req, httplib::Response &res)
-             {
-        // each joining player enters a game code and nickname 
-        std::string gameCode = "";
-        std::string nickname = "";
-        
-        // parse the request body to retrieve gameCode and nickname 
-
-        //can change this, just depends on format of request body when called 
-        size_t pos1 = req.body.find("\"gameCode\":");
-        if (pos1 != std::string::npos) {
-            size_t start = req.body.find("\"", pos1 + 11);
-            size_t end = req.body.find("\"", start + 1);
-            gameCode = req.body.substr(start + 1, end - start - 1);
+            res.status = 404;
+            res.set_content(R"({"success": false, "error": "Lobby not found"})", "application/json");
         }
-        size_t pos2 = req.body.find("\"nickname\":");
-        if (pos2 != std::string::npos) {
-            size_t start = req.body.find("\"", pos2 + 11);
-            size_t end = req.body.find("\"", start + 1);
-            nickname = req.body.substr(start + 1, end - start - 1);
-        }
-        if (gameCode.empty() || nickname.empty()) {
-            res.set_content(R"({"success": false, "error": "Missing game code or nickname"})", "application/json");
-            return;
-        }
-        {
-            // find the live game by game code 
-            std::lock_guard<std::mutex> lock(activeGamesMutex);
-            if (activeGames.find(gameCode) == activeGames.end()) {
-                // if a live game with this game code cannot be found, return error 
-                res.set_content(R"({"success": false, "error": "Game not found"})", "application/json");
-                return;
-            }
-        }
-        // Simulate adding a player by creating a new thread
-        // a new thread is created with the game code and nickname retrieved, each thread represents a player 
-        std::thread joinThread([gameCode, nickname]() {
-            std::cout << "Player " << nickname << " is joining game " << gameCode 
-                      << " (handled in thread " << std::this_thread::get_id() << ")\n";
-        });
+    }
+    catch (const std::exception& e) {
+        res.status = 500;
+        res.set_content(std::string(R"({"success": false, "error": ")") + e.what() + R"("})", "application/json");
+    }
+});
 
-        // call detach() to detach the thread
-        // the thread will continue running in the background while th emain thread proceeds without waiting  
-        joinThread.detach();
-        res.set_content(R"({"success": true, "message": "Joined game successfully"})", "application/json"); });
 
-    std::cout << "Server is running on http://localhost:5001\n";
+    std::cout << "HTTP Server running on http://localhost:5001\n";
+    std::cout << "WebSocket Server running on ws://localhost:9002\n";
+    
     svr.listen("0.0.0.0", 5001);
+    ws_thread.join();
     return 0;
 }

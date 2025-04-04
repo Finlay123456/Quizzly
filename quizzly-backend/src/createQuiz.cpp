@@ -7,13 +7,11 @@
 #include "httplib.h" // Include httplib for API handling
 #include "mongo_instance.h"
 
-// mongocxx::instance instance{};
+//mongocxx::instance instance{}; 
 
 // Function to insert quiz into MongoDB
-bool createQuiz(const std::string &jsonString)
-{
-    try
-    {
+bool createQuiz(const std::string &jsonString) {
+    try {
         // Initialize MongoDB
         mongocxx::uri uri("mongodb+srv://ngelbloo:jxdnXevSBkquhl2E@se3313-cluster.7kcvssw.mongodb.net/");
         mongocxx::client client(uri);
@@ -30,9 +28,8 @@ bool createQuiz(const std::string &jsonString)
 
         // Return true if the insert was successful
         return result ? true : false;
-    }
-    catch (const std::exception &e)
-    {
+
+    } catch (const std::exception &e) {
         std::cerr << "MongoDB Error: " << e.what() << std::endl;
         return false;
     }

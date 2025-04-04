@@ -49,6 +49,24 @@ const Footer = () => {
             </li>
           </ul>
         </div>
+
+        <div className="footer-section">
+          <h3 className="footer-heading">Connect</h3>
+          <div className="social-links">
+            <a href="https://twitter.com" target="_blank" rel="noopener noreferrer">
+              <i className="fa fa-twitter"></i>
+            </a>
+            <a href="https://facebook.com" target="_blank" rel="noopener noreferrer">
+              <i className="fa fa-facebook"></i>
+            </a>
+            <a href="https://instagram.com" target="_blank" rel="noopener noreferrer">
+              <i className="fa fa-instagram"></i>
+            </a>
+            <a href="https://linkedin.com" target="_blank" rel="noopener noreferrer">
+              <i className="fa fa-linkedin"></i>
+            </a>
+          </div>
+        </div>
       </div>
       
       <div className="footer-bottom">

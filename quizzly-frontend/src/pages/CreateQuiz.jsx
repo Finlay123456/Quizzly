@@ -146,8 +146,6 @@ const CreateQuiz = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    // should check if quiz name is unique 
   
     if (step === 1) {
       if (!quizData.title.trim() || !quizData.description.trim() || !quizData.category) {
@@ -162,7 +160,7 @@ const CreateQuiz = () => {
       alert('Your quiz needs at least one question.');
       return;
     }
-
+  
     const formattedQuiz = {
       title: quizData.title,
       description: quizData.description,

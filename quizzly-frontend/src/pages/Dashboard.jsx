@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import './Dashboard.css';
 
 const Dashboard = () => {
+  const navigate = useNavigate();
   const { currentUser } = useAuth();
   const [quizzes, setQuizzes] = useState([]);
   const [recentGames, setRecentGames] = useState([]);
@@ -18,49 +19,34 @@ const Dashboard = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Fetch quizzes from your C++ backend
         const quizzesResponse = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/quizzes`);
         const quizzesData = await quizzesResponse.json();
-        
+
         if (quizzesData.quizzes) {
-          // Transform the data to match your frontend structure
           const transformedQuizzes = quizzesData.quizzes.map(quiz => ({
-            id: quiz._id?.$oid || '', // Handle MongoDB ObjectId
+            id: quiz._id?.$oid || '',
             title: quiz.title || 'Untitled Quiz',
             description: quiz.description || '',
             questions: quiz.questions?.length || 0,
-            plays: 0, // You'll need to add this to your backend or calculate it
+            plays: 0,
             createdAt: quiz.created_at || new Date().toISOString(),
             lastPlayed: quiz.last_played || new Date().toISOString(),
             isPublic: quiz.isPublic || false,
             category: quiz.category || 'General',
             timeLimit: quiz.timeLimit || 30
           }));
-          
+
           setQuizzes(transformedQuizzes);
-          
-          // Calculate stats based on quizzes
+
           setStats({
             totalQuizzes: transformedQuizzes.length,
             totalPlays: transformedQuizzes.reduce((sum, quiz) => sum + quiz.plays, 0),
-            totalPlayers: 0, // You'll need to track this in your backend
-            averageScore: 0 // You'll need to track this in your backend
+            totalPlayers: 0,
+            averageScore: 0
           });
         }
 
-        // TODO: Fetch recent games from your backend when you implement that endpoint
-        const mockRecentGames = [
-          {
-            id: 'g1',
-            quizId: quizzesData.quizzes[0]?._id?.$oid || 'q1',
-            quizTitle: quizzesData.quizzes[0]?.title || 'Sample Quiz',
-            date: new Date().toISOString(),
-            players: 0,
-            averageScore: 0
-          }
-        ];
-        
-        setRecentGames(mockRecentGames);
+        setRecentGames([]);
         setIsLoading(false);
       } catch (error) {
         console.error('Error fetching data:', error);
@@ -71,16 +57,36 @@ const Dashboard = () => {
     fetchData();
   }, []);
 
-  if (isLoading) {
-    return (
-      <div className="dashboard-loading">
-        <div className="spinner"></div>
-        <p>Loading your dashboard...</p>
-      </div>
-    );
-  }
-
-  // Format date for display
+  const handlePlayQuiz = async (quizId) => {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/lobbies`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quiz_id: quizId,
+          host_id: "anonymous" 
+        })
+      });
+  
+      const res = await response.json();
+  
+      if (!res.success) {
+        throw new Error(res.error || 'Failed to create lobby');
+      }
+  
+      const lobbyId = res.lobby_id;
+  
+      sessionStorage.setItem('quizzlyPlayer', JSON.stringify({
+        nickname: 'anonymous',
+        gameCode: lobbyId
+      }));
+  
+      navigate(`/game-lobby/${quizId}/${lobbyId}`);
+    } catch (error) {
+      console.error('Error creating lobby:', error);
+    }
+  };
+  
   const formatDate = (dateString) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', {
@@ -90,39 +96,35 @@ const Dashboard = () => {
     });
   };
 
+  if (isLoading) {
+    return (
+      <div className="dashboard-loading">
+        <div className="spinner"></div>
+        <p>Loading your dashboard...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="dashboard">
       <div className="dashboard-header">
         <h1>Welcome{currentUser?.displayName ? `, ${currentUser.displayName}` : ''}!</h1>
+        <Link to="/create-quiz" className="btn btn-primary">
+          Create New Quiz
+        </Link>
       </div>
 
-      {/* Stats Overview */}
       <div className="stats-overview">
-        <div className="stat-card">
-          <h3>{stats.totalQuizzes}</h3>
-          <p>Quizzes Created</p>
-        </div>
-        <div className="stat-card">
-          <h3>{stats.totalPlays}</h3>
-          <p>Total Plays</p>
-        </div>
-        <div className="stat-card">
-          <h3>{stats.totalPlayers}</h3>
-          <p>Total Players</p>
-        </div>
-        <div className="stat-card">
-          <h3>{stats.averageScore}%</h3>
-          <p>Average Score</p>
-        </div>
+        <div className="stat-card"><h3>{stats.totalQuizzes}</h3><p>Quizzes Created</p></div>
+        <div className="stat-card"><h3>{stats.totalPlays}</h3><p>Total Plays</p></div>
+        <div className="stat-card"><h3>{stats.totalPlayers}</h3><p>Total Players</p></div>
+        <div className="stat-card"><h3>{stats.averageScore}%</h3><p>Average Score</p></div>
       </div>
 
-      {/* My Quizzes */}
       <section className="dashboard-section">
         <div className="section-header">
           <h2>My Quizzes</h2>
-          <Link to="/my-quizzes" className="section-link">
-            View All
-          </Link>
+          <Link to="/my-quizzes" className="section-link">View All</Link>
         </div>
 
         {quizzes.length === 0 ? (
@@ -153,18 +155,14 @@ const Dashboard = () => {
                   <span>Created: {formatDate(quiz.createdAt)}</span>
                 </div>
                 <div className="quiz-actions">
-                <Link 
-                  to={{
-                      pathname: `/game-lobby/${quiz.id}`,
-                      state: { quizId: quiz.id } // Pass the quiz ID as state
-                      }} 
+                  <button 
                     className="btn btn-sm btn-primary"
-                    >
-                     Play
-                  </Link>
-                  {/* When the user clicks "Edit," the quiz id is passed via the URL */}
+                    onClick={() => handlePlayQuiz(quiz.id)}
+                  >
+                    Play
+                  </button>
                   <Link to={`/edit-quiz/${quiz.id}`} className="btn btn-sm btn-outline">
-                  Edit
+                    Edit
                   </Link>
                   <button className="btn btn-sm btn-outline">Share</button>
                 </div>
@@ -180,51 +178,6 @@ const Dashboard = () => {
                 </Link>
               </div>
             </div>
-          </div>
-        )}
-      </section>
-
-      {/* Recent Games */}
-      <section className="dashboard-section">
-        <div className="section-header">
-          <h2>Recent Games</h2>
-          <Link to="/game-history" className="section-link">
-            View History
-          </Link>
-        </div>
-
-        {recentGames.length === 0 ? (
-          <div className="empty-state">
-            <p>You haven't hosted any games yet.</p>
-          </div>
-        ) : (
-          <div className="table-container">
-            <table className="games-table">
-              <thead>
-                <tr>
-                  <th>Quiz</th>
-                  <th>Date</th>
-                  <th>Players</th>
-                  <th>Avg. Score</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentGames.map((game) => (
-                  <tr key={game.id}>
-                    <td>{game.quizTitle}</td>
-                    <td>{formatDate(game.date)}</td>
-                    <td>{game.players}</td>
-                    <td>{game.averageScore}%</td>
-                    <td>
-                      <Link to={`/results/${game.id}`} className="btn btn-sm btn-outline">
-                        Results
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         )}
       </section>

@@ -1,11 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import './PlayQuiz.css';
 
 const PlayQuiz = () => {
-  const { id: quizId } = useParams();
+  const { id: quizId} = useParams();
   const navigate = useNavigate();
-  
+  const location = useLocation(); // Add this import
+
+// Extract lobby code from URL (last 6 characters after last slash)
+  const pathParts = location.pathname.split('/');
+  const lobbyCode = pathParts[pathParts.length - 1].length === 6 ? pathParts[pathParts.length - 1] : null;
   // State
   const [quizData, setQuizData] = useState(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -24,13 +28,14 @@ const PlayQuiz = () => {
   const currentQuestionIndexRef = useRef();
   const navigationTimeoutRef = useRef();
   const isAnsweredRef = useRef();
-
+  const scoreRef = useRef(0);
   // Sync refs with state
   useEffect(() => {
     quizDataRef.current = quizData;
     currentQuestionIndexRef.current = currentQuestionIndex;
     isAnsweredRef.current = isAnswered;
-  }, [quizData, currentQuestionIndex, isAnswered]);
+    scoreRef.current = score;
+  }, [quizData, currentQuestionIndex, isAnswered, score]);
 
   // Load player info and quiz data
   useEffect(() => {
@@ -128,7 +133,11 @@ const PlayQuiz = () => {
     if (isCorrect) {
       const timeBonus = Math.floor((timeLeft / currentQuestion.timeLimit) * 50);
       questionScore = currentQuestion.points + timeBonus;
-      setScore(prevScore => prevScore + questionScore);
+      setScore(prevScore => {
+        const newScore = prevScore + questionScore;
+        scoreRef.current = newScore;
+        return newScore;
+      });
     }
   
     // Record answer
@@ -199,18 +208,46 @@ const PlayQuiz = () => {
   };
 
   // Save quiz results
-  const saveResults = () => {
+  // Save quiz results
+  const saveResults = async () => {
     const results = {
-      score, 
+      score: scoreRef.current,
       answers: playerAnswers,
       totalQuestions: quizDataRef.current?.questions?.length || 0,
       quizTitle: quizDataRef.current?.title || ''
     };
-    
+  
+    try {
+      // Send score to lobby if there's a lobby code in the URL
+      
+        const response = await fetch(`http://localhost:5001/api/lobbies/${lobbyCode}/submit-score`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            nickname: playerNickname,
+            score: scoreRef.current
+          })
+        });
+  
+        if (!response.ok) {
+          throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+  
+        const data = await response.json();
+        if (!data.success) {
+          console.error("Failed to submit score:", data.error);
+        }
+      
+    } catch (error) {
+      console.error("Failed to submit score to lobby:", error);
+    }
+  
     // Navigate to results page after a delay
-    navigationTimeoutRef.current = setTimeout(() => {
+    /*navigationTimeoutRef.current = setTimeout(() => {
       navigate(`/results/${quizId}`, { state: results });
-    }, 3000);
+    }, 3000);*/
   };
 
   // Format time

@@ -193,12 +193,14 @@ const GameLobby = () => {
           <div className="player-info">
             <div className="player-avatar large">{currentPlayer.avatar || '😎'}</div>
             <h3 className="player-name">{playerNickname}</h3>
+            {/*}
             <div className={`player-status-badge ${currentPlayer.isReady ? 'ready' : ''}`}>
               {currentPlayer.isReady ? 'Ready to Play' : 'Not Ready'}
             </div>
           </div>
 
           <div className="lobby-actions">
+            }
             <button
               className={`btn ${currentPlayer.isReady ? 'btn-outline' : 'btn-primary'} btn-block`}
               onClick={toggleReady}
@@ -211,7 +213,7 @@ const GameLobby = () => {
               onClick={leaveGame}
             >
               Leave Game
-            </button>
+            </button>*/}
           </div>
 
           <div className="lobby-rules">

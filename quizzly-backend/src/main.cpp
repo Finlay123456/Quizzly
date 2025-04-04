@@ -207,6 +207,21 @@ void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
                             while(true) {
                                 beast::flat_buffer loop_buffer;
                                 player_ws->read(loop_buffer);
+                                auto loop_doc = bsoncxx::from_json(
+                                    beast::buffers_to_string(loop_buffer.data())
+                                );
+                                auto loop_view = loop_doc.view();
+                                std::string loop_action = std::string(loop_view["action"].get_string().value);
+
+                                if(loop_action == "start_game") {
+                                    // Verify host privileges if needed
+                                    auto start_response = bsoncxx::builder::stream::document{}
+                                        << "action" << "start_game"
+                                        << "lobby_id" << lobby_id
+                                        << bsoncxx::builder::stream::finalize;
+
+                                    lobby->broadcast(bsoncxx::to_json(start_response));
+                                }
                             }
                         } catch(const beast::system_error& se) {
                             if(se.code() == websocket::error::closed) {
@@ -251,7 +266,7 @@ void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
                             }
                         }
                     }
-                } 
+                }
                 catch(const std::exception& e) {
                     std::cerr << "WebSocket error: " << e.what() << std::endl;
                 }

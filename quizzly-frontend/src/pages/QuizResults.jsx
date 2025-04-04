@@ -153,87 +153,58 @@ const QuizResults = () => {
 
   return (
     <div className="quiz-results">
-      <div className="results-header">
-        <h1>Lobby Results</h1>
-        <p className="lobby-info">
-          <span className="lobby-code">{lobbyCode}</span>
-          {results.quizTitle && <span className="quiz-title">{results.quizTitle}</span>}
-        </p>
+  <div className="results-header">
+    <p className="lobby-code">{lobbyCode}</p>
+    <h1>Lobby Results</h1>
+    {results.quizTitle && <p className="quiz-title">{results.quizTitle}</p>}
+  </div>
+
+  <div className="results-summary">
+    <div className="score-card">
+      <div className="score-value">{results.score}</div>
+      <div className="score-label">Your Score</div>
+    </div>
+  </div>
+
+  <div className="leaderboard-section">
+    <h2>Leaderboard</h2>
+    <div className="leaderboard">
+      <div className="leaderboard-header">
+        <span>Rank</span>
+        <span>Player</span>
+        <span>Score</span>
       </div>
 
-      <div className="results-content">
-        <div className="player-performance">
-          <div className="performance-card">
-            <div className="performance-value">{results.score}</div>
-            <div className="performance-label">Your Score</div>
-          </div>
-          
-          {playerRank && (
-            <div className="performance-card">
-              <div className="performance-value">
-                {playerRank}
-                {playerRank === 1 ? 'st' : playerRank === 2 ? 'nd' : playerRank === 3 ? 'rd' : 'th'}
-              </div>
-              <div className="performance-label">Your Rank</div>
+      <div className="leaderboard-body">
+        {leaderboard.map((player) => (
+          <div
+            key={`${player.rank}-${player.nickname}`}
+            className={`leaderboard-row ${player.isCurrentPlayer ? 'current-player' : ''}`}
+          >
+            <div className="leaderboard-rank">
+              {player.rank <= 3 ? (
+                <span className="trophy">
+                  {player.rank === 1 ? '🥇' : player.rank === 2 ? '🥈' : '🥉'}
+                </span>
+              ) : (
+                <span>{player.rank}</span>
+              )}
             </div>
-          )}
-
-          <div className="performance-card">
-            <div className="performance-value">{calculatePerformance()}%</div>
-            <div className="performance-label">Performance</div>
-          </div>
-        </div>
-
-        <div className="leaderboard-section">
-          <h2>Leaderboard</h2>
-          
-          {leaderboard.length > 0 ? (
-            <div className="leaderboard-container">
-              <div className="leaderboard-header">
-                <span>Rank</span>
-                <span>Player</span>
-                <span>Score</span>
-              </div>
-              
-              <div className="leaderboard-rows">
-                {leaderboard.map((player) => (
-                  <div 
-                    key={`${player.rank}-${player.nickname}`}
-                    className={`leaderboard-row ${player.isCurrentPlayer ? 'current-player' : ''}`}
-                  >
-                    <div className="leaderboard-rank">
-                      {player.rank <= 3 ? (
-                        <span className={`trophy rank-${player.rank}`}>
-                          {player.rank === 1 ? '🥇' : playerRank === 2 ? '🥈' : '🥉'}
-                        </span>
-                      ) : (
-                        <span>{player.rank}</span>
-                      )}
-                    </div>
-                    <div className="leaderboard-name">
-                      {player.nickname}
-                      {player.isCurrentPlayer && <span className="you-indicator"> (You)</span>}
-                    </div>
-                    <div className="leaderboard-score">{player.score}</div>
-                  </div>
-                ))}
-              </div>
+            <div className="leaderboard-name">
+              {player.nickname} {player.isCurrentPlayer && <span className="you-indicator">(You)</span>}
             </div>
-          ) : (
-            <p className="no-scores">No scores recorded yet</p>
-          )}
-        </div>
-
-        <div className="results-actions">
-          <button onClick={playAgain} className="btn btn-primary">
-            Play Again
-          </button>
-          <Link to="/join" className="btn btn-secondary">
-            Join Another Lobby
-          </Link>
-        </div>
+            <div className="leaderboard-score">{player.score}</div>
+          </div>
+        ))}
       </div>
     </div>
+  </div>
+
+  <div className="results-actions">
+    <Link to="/join" className="btn btn-secondary">Join Another Lobby</Link>
+  </div>
+</div>
+
   );
 };
 

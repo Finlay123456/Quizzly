@@ -49,6 +49,7 @@ std::string generate_lobby_code() {
     return code;
 }
 
+
 struct GameLobby {
     std::string id;
     std::string quiz_id;
@@ -66,27 +67,66 @@ struct GameLobby {
 };
 
 class LobbyManager {
-public:
-    std::shared_ptr<GameLobby> create_lobby(const std::string& quiz_id, const std::string& host_id) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto lobby = std::make_shared<GameLobby>();
-        lobby->id = generate_lobby_code();
-        lobby->quiz_id = quiz_id;
-        lobby->host_id = host_id;
-        lobbies_[lobby->id] = lobby;
-        return lobby;
-    }
+    public:
+        std::shared_ptr<GameLobby> create_lobby(const std::string& quiz_id, const std::string& host_id) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto lobby = std::make_shared<GameLobby>();
+            lobby->id = generate_lobby_code();
+            lobby->quiz_id = quiz_id;
+            lobby->host_id = host_id;
+            lobbies_[lobby->id] = lobby;
+            return lobby;
+        }
+    
+        std::shared_ptr<GameLobby> get_lobby(const std::string& id) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = lobbies_.find(id);
+            return (it != lobbies_.end()) ? it->second : nullptr;
+        }
+        std::mutex mutex_;
+        std::unordered_map<std::string, std::shared_ptr<GameLobby>> lobbies_;
+    };
 
-    std::shared_ptr<GameLobby> get_lobby(const std::string& id) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = lobbies_.find(id);
-        return (it != lobbies_.end()) ? it->second : nullptr;
-    }
+    void preload_lobbies(LobbyManager& lobby_manager) {
+    try {
+        mongocxx::client client{mongocxx::uri{MONGODB_URI}};
+        auto collection = client["Quiz_App_DB"]["Lobbies"];
 
-private:
-    std::mutex mutex_;
-    std::unordered_map<std::string, std::shared_ptr<GameLobby>> lobbies_;
-};
+        // Only preload lobbies that are still 'waiting' (game not started)
+        auto cursor = collection.find(bsoncxx::builder::stream::document{} 
+            << "status" << "waiting"
+            << bsoncxx::builder::stream::finalize);
+
+        for (auto&& doc : cursor) {
+            std::string id = std::string(doc["_id"].get_string().value);
+            std::string quiz_id = std::string(doc["quiz_id"].get_string().value);
+            std::string host_id = std::string(doc["host_id"].get_string().value);
+
+            auto lobby = std::make_shared<GameLobby>();
+            lobby->id = id;
+            lobby->quiz_id = quiz_id;
+            lobby->host_id = host_id;
+
+            // (Optional) preload existing players if needed
+            if (doc.find("players") != doc.end() && doc["players"].type() == bsoncxx::type::k_array) {
+                for (const auto& elem : doc["players"].get_array().value) {
+                    lobby->player_ids.insert(std::string(elem.get_string().value));
+                }
+            }
+
+            std::lock_guard<std::mutex> lock(lobby_manager.mutex_);
+            lobby_manager.lobbies_[id] = lobby;
+        }
+
+        std::cout << "✅ Preloaded lobbies from MongoDB\n";
+
+    } catch (const std::exception& e) {
+        std::cerr << "❌ Error preloading lobbies: " << e.what() << std::endl;
+    }
+}
+
+
+
 
 void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
     try {
@@ -225,6 +265,7 @@ void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
 
 int main() {
     LobbyManager lobby_manager;
+    preload_lobbies(lobby_manager);
     
     std::thread ws_thread([&lobby_manager]{
         run_websocket_server(lobby_manager, 9002);

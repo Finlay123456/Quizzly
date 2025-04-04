@@ -3,233 +3,221 @@ import { useParams, useLocation, useNavigate, Link } from 'react-router-dom';
 import './QuizResults.css';
 
 const QuizResults = () => {
-  const { id: quizId } = useParams();
+  // Extract lobbyCode from URL parameters
+  const { lobbyCode } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const [results, setResults] = useState(null);
+  
+  const [results, setResults] = useState({
+    score: 0,
+    quizTitle: `Lobby ${lobbyCode}`,
+    playerNickname: ''
+  });
   const [loading, setLoading] = useState(true);
-  const [showDetails, setShowDetails] = useState(false);
   const [leaderboard, setLeaderboard] = useState([]);
-  
+  const [error, setError] = useState(null);
+
   useEffect(() => {
-    // If results were passed via state, use them
-    if (location.state?.score !== undefined) {
-      setResults({
-        score: location.state.score,
-        answers: location.state.answers,
-        totalQuestions: location.state.totalQuestions,
-        quizTitle: location.state.quizTitle
-      });
-      setLoading(false);
-      
-      // Fetch leaderboard data
-      fetchLeaderboard();
-    } else {
-      // Otherwise, fetch results from API
-      fetchResults();
-    }
-  }, [location, quizId]);
-  
-  // Mock fetch results
-  const fetchResults = () => {
-    // Simulate API call
-    setTimeout(() => {
-      // Mock data
-      const mockResults = {
-        score: 350,
-        totalQuestions: 5,
-        quizTitle: 'Science Quiz: The Basics',
-        answers: [
-          { questionId: 'q1', isCorrect: true, score: 120 },
-          { questionId: 'q2', isCorrect: false, score: 0 },
-          { questionId: 'q3', isCorrect: true, score: 100 },
-          { questionId: 'q4', isCorrect: true, score: 130 },
-          { questionId: 'q5', isCorrect: false, score: 0 }
-        ]
-      };
-      
-      setResults(mockResults);
-      setLoading(false);
-      
-      // Fetch leaderboard data
-      fetchLeaderboard();
-    }, 1000);
-  };
-  
-  // Mock fetch leaderboard
-  const fetchLeaderboard = () => {
-    // Simulate API call
-    setTimeout(() => {
-      // Generate mock leaderboard with current player included
-      const playerNickname = JSON.parse(sessionStorage.getItem('quizzlyPlayer'))?.nickname || 'You';
-      
-      const mockLeaderboard = [
-        { rank: 1, name: 'ScienceWhiz', score: 480, isCurrentPlayer: false },
-        { rank: 2, name: playerNickname, score: location.state?.score || 350, isCurrentPlayer: true },
-        { rank: 3, name: 'BrainiacGamer', score: 320, isCurrentPlayer: false },
-        { rank: 4, name: 'QuizMaster', score: 290, isCurrentPlayer: false },
-        { rank: 5, name: 'MindExplorer', score: 270, isCurrentPlayer: false },
-        { rank: 6, name: 'ThinkTank', score: 240, isCurrentPlayer: false },
-        { rank: 7, name: 'QuizWizard', score: 210, isCurrentPlayer: false },
-        { rank: 8, name: 'GameChamp', score: 180, isCurrentPlayer: false }
-      ];
-      
-      setLeaderboard(mockLeaderboard);
-    }, 1500);
-  };
-  
-  // Calculate accuracy percentage
-  const calculateAccuracy = () => {
-    if (!results || !results.answers || results.answers.length === 0) return 0;
-    
-    const correctAnswers = results.answers.filter(a => a.isCorrect).length;
-    return Math.round((correctAnswers / results.totalQuestions) * 100);
-  };
-  
-  // Calculate performance score (0-100)
+    const fetchLobbyData = async () => {
+      try {
+        // First validate we have a lobbyCode
+        if (!lobbyCode || lobbyCode.length !== 6) {
+          throw new Error('Invalid lobby code format');
+        }
+
+        // Get player info from session storage
+        const playerData = JSON.parse(sessionStorage.getItem('quizzlyPlayer')) || {};
+        const playerNickname = playerData.nickname || 'You';
+
+        // If we have state from navigation (coming from game), use it
+        if (location.state) {
+          setResults(prev => ({
+            ...prev,
+            score: location.state.score || 0,
+            answers: location.state.answers,
+            totalQuestions: location.state.totalQuestions,
+            quizTitle: location.state.quizTitle || `Lobby ${lobbyCode}`,
+            playerNickname
+          }));
+        } else {
+          setResults(prev => ({
+            ...prev,
+            playerNickname,
+            quizTitle: `Lobby ${lobbyCode}`
+          }));
+        }
+
+        // Fetch lobby results from backend
+        const response = await fetch(`http://localhost:5001/api/results/${lobbyCode}`);
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch lobby data: ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to load lobby data');
+        }
+
+        // Process scores from backend
+        const scores = data.data.scores || [];
+        const formattedLeaderboard = scores
+          .map(entry => ({
+            nickname: entry.nickname,
+            score: entry.score,
+            isCurrentPlayer: entry.nickname === playerNickname
+          }))
+          .sort((a, b) => b.score - a.score)
+          .map((player, index) => ({
+            ...player,
+            rank: index + 1
+          }));
+
+        setLeaderboard(formattedLeaderboard);
+
+        // Update current player's score if not set from location.state
+        if (!location.state?.score) {
+          const playerEntry = formattedLeaderboard.find(p => p.isCurrentPlayer);
+          if (playerEntry) {
+            setResults(prev => ({
+              ...prev,
+              score: playerEntry.score
+            }));
+          }
+        }
+
+      } catch (err) {
+        console.error('Error loading lobby results:', err);
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchLobbyData();
+  }, [lobbyCode, location.state]);
+
+  // Calculate player's rank
+  const playerRank = leaderboard.findIndex(p => p.isCurrentPlayer) + 1 || null;
+
+  // Calculate performance percentage (0-100)
   const calculatePerformance = () => {
-    if (!results || !results.answers || results.answers.length === 0) return 0;
-    
-    // Assuming maximum possible score is 150 points per question (100 base + 50 time bonus)
-    const maxPossibleScore = results.totalQuestions * 150;
-    return Math.round((results.score / maxPossibleScore) * 100);
+    if (leaderboard.length === 0) return 0;
+    const topScore = leaderboard[0]?.score || 1;
+    return Math.min(Math.round((results.score / topScore) * 100), 100);
   };
-  
-  // Play again with same quiz
+
+  // Play again in the same lobby
   const playAgain = () => {
-    navigate(`/play/${quizId}`);
+    navigate(`/play-quiz/${location.state?.quizId || 'lobby'}/${lobbyCode}`);
   };
-  
-  // Share results
-  const shareResults = () => {
-    // In a real app, this would generate a shareable link or open a share dialog
-    alert('Share functionality would be implemented here');
-  };
-  
+
   if (loading) {
     return (
       <div className="results-loading">
         <div className="spinner"></div>
-        <p>Loading your results...</p>
+        <p>Loading lobby results...</p>
       </div>
     );
   }
-  
+
+  if (error) {
+    return (
+      <div className="results-error">
+        <h2>Error Loading Lobby</h2>
+        <p>{error}</p>
+        <div className="error-actions">
+          <Link to="/dashboard" className="btn btn-primary">
+            Back to Dashboard
+          </Link>
+          <button onClick={() => window.location.reload()} className="btn btn-outline">
+            Try Again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="quiz-results">
       <div className="results-header">
-        <h1>Quiz Results</h1>
-        <p className="quiz-title">{results.quizTitle}</p>
+        <h1>Lobby Results</h1>
+        <p className="lobby-info">
+          <span className="lobby-code">{lobbyCode}</span>
+          {results.quizTitle && <span className="quiz-title">{results.quizTitle}</span>}
+        </p>
       </div>
-      
-      <div className="results-container">
-        <div className="results-summary">
-          <div className="score-card">
-            <div className="score-value">{results.score}</div>
-            <div className="score-label">Final Score</div>
+
+      <div className="results-content">
+        <div className="player-performance">
+          <div className="performance-card">
+            <div className="performance-value">{results.score}</div>
+            <div className="performance-label">Your Score</div>
           </div>
           
-          <div className="stats-grid">
-            <div className="stat-card">
-              <div className="stat-value">{calculateAccuracy()}%</div>
-              <div className="stat-label">Accuracy</div>
+          {playerRank && (
+            <div className="performance-card">
+              <div className="performance-value">
+                {playerRank}
+                {playerRank === 1 ? 'st' : playerRank === 2 ? 'nd' : playerRank === 3 ? 'rd' : 'th'}
+              </div>
+              <div className="performance-label">Your Rank</div>
             </div>
-            
-            <div className="stat-card">
-              <div className="stat-value">{results.answers.filter(a => a.isCorrect).length}/{results.totalQuestions}</div>
-              <div className="stat-label">Correct Answers</div>
-            </div>
-            
-            <div className="stat-card">
-              <div className="stat-value">{calculatePerformance()}/100</div>
-              <div className="stat-label">Performance</div>
-            </div>
-          </div>
-          
-          <div className="results-actions">
-            <button className="btn btn-primary" onClick={playAgain}>
-              Play Again
-            </button>
-            <button className="btn btn-outline" onClick={() => setShowDetails(!showDetails)}>
-              {showDetails ? 'Hide Details' : 'Show Details'}
-            </button>
-            <button className="btn btn-outline" onClick={shareResults}>
-              Share Results
-            </button>
+          )}
+
+          <div className="performance-card">
+            <div className="performance-value">{calculatePerformance()}%</div>
+            <div className="performance-label">Performance</div>
           </div>
         </div>
-        
-        {showDetails && (
-          <div className="results-details">
-            <h2>Question Details</h2>
-            
-            <div className="details-list">
-              {results.answers.map((answer, index) => (
-                <div 
-                  key={answer.questionId} 
-                  className={`detail-item ${answer.isCorrect ? 'correct' : 'incorrect'}`}
-                >
-                  <div className="question-number">Q{index + 1}</div>
-                  <div className="answer-result">
-                    {answer.isCorrect ? '✓ Correct' : '✗ Incorrect'}
-                  </div>
-                  <div className="answer-score">
-                    +{answer.score} pts
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        
+
         <div className="leaderboard-section">
           <h2>Leaderboard</h2>
           
-          {leaderboard.length === 0 ? (
-            <div className="leaderboard-loading">
-              <div className="spinner small"></div>
-              <p>Loading leaderboard...</p>
-            </div>
-          ) : (
-            <div className="leaderboard">
+          {leaderboard.length > 0 ? (
+            <div className="leaderboard-container">
               <div className="leaderboard-header">
-                <span className="rank-header">Rank</span>
-                <span className="name-header">Player</span>
-                <span className="score-header">Score</span>
+                <span>Rank</span>
+                <span>Player</span>
+                <span>Score</span>
               </div>
               
-              <div className="leaderboard-body">
+              <div className="leaderboard-rows">
                 {leaderboard.map((player) => (
                   <div 
-                    key={player.rank} 
+                    key={`${player.rank}-${player.nickname}`}
                     className={`leaderboard-row ${player.isCurrentPlayer ? 'current-player' : ''}`}
                   >
                     <div className="leaderboard-rank">
                       {player.rank <= 3 ? (
-                        <div className={`trophy rank-${player.rank}`}>
-                          {player.rank === 1 ? '🥇' : player.rank === 2 ? '🥈' : '🥉'}
-                        </div>
+                        <span className={`trophy rank-${player.rank}`}>
+                          {player.rank === 1 ? '🥇' : playerRank === 2 ? '🥈' : '🥉'}
+                        </span>
                       ) : (
                         <span>{player.rank}</span>
                       )}
                     </div>
                     <div className="leaderboard-name">
-                      {player.name} {player.isCurrentPlayer && '(You)'}
+                      {player.nickname}
+                      {player.isCurrentPlayer && <span className="you-indicator"> (You)</span>}
                     </div>
                     <div className="leaderboard-score">{player.score}</div>
                   </div>
                 ))}
               </div>
             </div>
+          ) : (
+            <p className="no-scores">No scores recorded yet</p>
           )}
         </div>
-        
-        <div className="results-footer">
-          <Link to="/dashboard" className="btn btn-outline">
-            Back to Dashboard
-          </Link>
-          <Link to="/join" className="btn btn-primary">
-            Join Another Game
+
+        <div className="results-actions">
+          <button onClick={playAgain} className="btn btn-primary">
+            Play Again
+          </button>
+          <Link to="/join" className="btn btn-secondary">
+            Join Another Lobby
           </Link>
         </div>
       </div>

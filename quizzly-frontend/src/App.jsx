@@ -33,7 +33,7 @@ function AppContent() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/create-quiz" element={<CreateQuiz />} />
           <Route path="/game-lobby/:id/:lobby" element={<GameLobby />} />
-          <Route path="/results/:lobby" element={<QuizResults />} />
+          <Route path="/results/:lobbyCode" element={<QuizResults />} />
           <Route path="/play-quiz/:id/:lobby" element={<PlayQuiz />} />
           <Route path="/edit-quiz/:id" element={<EditQuiz />} />
           <Route path="/home" element={<Home />} />

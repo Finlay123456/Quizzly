@@ -241,8 +241,80 @@ int main() {
         res.status = 200;
     });
 
-    // Existing endpoints (keep your original implementations)
-    // ...
+    svr.Get("/api/data", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(R"({"message": "Hello from C++ Backend!"})", "application/json");
+    });
+
+    svr.Get("/api/quizzes", [](const httplib::Request&, httplib::Response& res) {
+        std::string quizzes = getAllQuizzes();
+        res.set_content(quizzes, "application/json");
+    });
+
+    svr.Post("/api/create-quiz", [](const httplib::Request& req, httplib::Response& res) {
+        bool success = createQuiz(req.body);
+        std::string jsonResponse = success 
+            ? R"({"success": true})" 
+            : R"({"success": false, "error": "Failed to create quiz"})";
+        res.set_content(jsonResponse, "application/json");
+    });
+
+    svr.Post("/api/register", [](const httplib::Request& req, httplib::Response& res) {
+        bool success = registerUser(req.body);
+        std::string jsonResponse = success 
+            ? R"({"success": true})" 
+            : R"({"success": false, "error": "Failed to register user"})";
+        res.set_content(jsonResponse, "application/json");
+    });
+
+    svr.Get(R"(/api/quiz/id/([a-f0-9]{24}))", [](const httplib::Request& req, httplib::Response& res) {
+        std::string quizId = req.matches[1];
+        try {
+            mongocxx::client client{mongocxx::uri{"mongodb+srv://ngelbloo:jxdnXevSBkquhl2E@se3313-cluster.7kcvssw.mongodb.net/"}};
+            auto collection = client["Quiz_App_DB"]["Quizzes"];
+            bsoncxx::oid oid(quizId);
+            auto result = collection.find_one(bsoncxx::builder::stream::document{} 
+                << "_id" << oid 
+                << bsoncxx::builder::stream::finalize);
+
+            if(result) {
+                res.set_content(R"({"success": true, "quiz": )" + bsoncxx::to_json(result->view()) + "}", "application/json");
+            } else {
+                res.set_content(R"({"success": false, "error": "Quiz not found"})", "application/json");
+            }
+        } 
+        catch(const std::exception& e) {
+            res.set_content(std::string(R"({"success": false, "error": ")") + e.what() + R"("})", "application/json");
+        }
+    });
+
+    svr.Put("/api/edit-quiz", [](const httplib::Request& req, httplib::Response& res) {
+        try {
+            auto doc = bsoncxx::from_json(req.body);
+            auto view = doc.view();
+            
+            if(!view["id"] && !view["_id"]) {
+                res.set_content(R"({"success": false, "error": "Missing quiz ID"})", "application/json");
+                return;
+            }
+            
+            bool success = updateQuiz(req.body);
+            res.set_content(success 
+                ? R"({"success": true})" 
+                : R"({"success": false, "error": "Update failed"})", "application/json");
+        } 
+        catch(const std::exception& e) {
+            res.set_content(std::string(R"({"success": false, "error": ")") + e.what() + R"("})", "application/json");
+        }
+    });
+
+    svr.Post("/api/login", [](const httplib::Request& req, httplib::Response& res) {
+        bool success = loginUser(req.body);
+        std::string jsonResponse = success 
+            ? R"({"success": true})" 
+            : R"({"success": false, "error": "Failed to login"})";
+        res.set_content(jsonResponse, "application/json");
+    });
+
 
     svr.Post("/api/lobbies", [&](const httplib::Request& req, httplib::Response& res) {
         try {

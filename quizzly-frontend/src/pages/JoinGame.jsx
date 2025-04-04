@@ -20,20 +20,42 @@ const JoinGame = () => {
 
     try {
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/lobbies/${gameCode}`);
+      if (!res.ok) throw new Error('Failed to find lobby');
       const data = await res.json();
 
       if (!data || !data.quiz_id) {
-        setError('Invalid game code. Please check and try again.');
+        setError('Invalid game code.');
         setIsJoining(false);
         return;
       }
 
+      // Save player info
       sessionStorage.setItem('quizzlyPlayer', JSON.stringify({
         nickname,
         gameCode
       }));
 
-      navigate(`/game-lobby/${data.quiz_id}/${gameCode}`);
+      // ⭐ Immediately connect to WebSocket
+      const ws = new WebSocket(`ws://${window.location.hostname}:9002`);
+
+      ws.onopen = () => {
+        console.log('Connected to WebSocket server from join');
+        ws.send(JSON.stringify({
+          action: "join",
+          lobby_id: gameCode,
+          user_id: nickname
+        }));
+
+        // After connecting, navigate
+        navigate(`/game-lobby/${data.quiz_id}/${gameCode}`);
+      };
+
+      ws.onerror = (err) => {
+        console.error('WebSocket error on join:', err);
+        setError('WebSocket connection error');
+        setIsJoining(false);
+      };
+
     } catch (err) {
       console.error('Join error:', err);
       setError('Something went wrong. Try again.');
@@ -50,6 +72,7 @@ const JoinGame = () => {
     const value = e.target.value.slice(0, 15);
     setNickname(value);
   };
+
 
   return (
     <div className="join-game-container">

@@ -5,18 +5,12 @@ import './GameLobby.css';
 const GameLobby = () => {
   const { id: quizId, lobby: lobbyCode } = useParams();
   const navigate = useNavigate();
-
   const [players, setPlayers] = useState([]);
   const [hostInfo, setHostInfo] = useState({ name: 'Quiz Host', avatar: '👨‍🏫' });
-  const [quizInfo, setQuizInfo] = useState({
-    title: 'Loading quiz...',
-    description: '',
-    questions: 0,
-    timeLimit: 30
-  });
-  const [countdown, setCountdown] = useState(null);
+  const [quizInfo, setQuizInfo] = useState({ title: 'Loading quiz...', description: '', questions: 0, timeLimit: 30 });
   const [playerNickname, setPlayerNickname] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [countdown, setCountdown] = useState(null);
 
   useEffect(() => {
     const storedPlayer = sessionStorage.getItem('quizzlyPlayer');
@@ -24,23 +18,13 @@ const GameLobby = () => {
       navigate('/join');
       return;
     }
-
     const playerData = JSON.parse(storedPlayer);
     setPlayerNickname(playerData.nickname);
-
-    setPlayers([{
-      id: Date.now(),
-      nickname: playerData.nickname,
-      avatar: '😎',
-      isReady: false,
-      isYou: true
-    }]);
 
     const fetchQuizData = async () => {
       try {
         const quizResponse = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/quiz/id/${quizId}`);
         if (!quizResponse.ok) throw new Error('Failed to load quiz');
-
         const data = await quizResponse.json();
         const quiz = data.quiz;
 
@@ -65,7 +49,48 @@ const GameLobby = () => {
     };
 
     fetchQuizData();
-  }, [quizId, navigate]);
+
+    const ws = new WebSocket(`ws://${window.location.hostname}:9002`);
+
+    ws.onopen = () => {
+      console.log('✅ Connected to WebSocket server');
+
+      ws.send(JSON.stringify({
+        lobby_id: lobbyCode,       // 6-character lobby code
+        user_id: playerData.nickname,
+        action: "join"
+      }));
+    };
+
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      console.log('📩 Message from server:', message);
+
+      if (message.action === "player_joined" || message.action === "player_left") {
+        if (message.players && Array.isArray(message.players)) {
+          setPlayers(message.players.map(playerNickname => ({
+            id: Date.now() + Math.random(), // Unique id
+            nickname: playerNickname,
+            avatar: '😎',
+            isReady: false,
+            isYou: playerNickname === playerData.nickname
+          })));
+        }
+      }
+    };
+
+    ws.onerror = (err) => {
+      console.error('❌ WebSocket error:', err);
+    };
+
+    ws.onclose = () => {
+      console.warn('⚡ WebSocket closed');
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [quizId, lobbyCode, navigate]);
 
   const startCountdown = () => {
     setCountdown(5);

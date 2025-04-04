@@ -64,7 +64,7 @@ const Dashboard = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           quiz_id: quizId,
-          host_id: "anonymous" 
+          host_id: currentUser?.uid || "anonymous"   
         })
       });
   
@@ -77,7 +77,7 @@ const Dashboard = () => {
       const lobbyId = res.lobby_id;
   
       sessionStorage.setItem('quizzlyPlayer', JSON.stringify({
-        nickname: 'anonymous',
+        nickname: currentUser?.displayName || "anonymous",
         gameCode: lobbyId
       }));
   
@@ -86,6 +86,7 @@ const Dashboard = () => {
       console.error('Error creating lobby:', error);
     }
   };
+  
   
   const formatDate = (dateString) => {
     const date = new Date(dateString);

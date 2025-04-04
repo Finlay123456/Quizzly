@@ -13,7 +13,7 @@ const PlayQuiz = () => {
   const [showAnswer, setShowAnswer] = useState(false);
   const [isAnswered, setIsAnswered] = useState(false);
   const [playerAnswers, setPlayerAnswers] = useState([]);
-  const [gameStatus, setGameStatus] = useState('playing'); // playing, review, ended
+  const [gameStatus, setGameStatus] = useState('playing');
   const [playerNickname, setPlayerNickname] = useState('');
   const timerRef = useRef(null);
   
@@ -24,100 +24,28 @@ const PlayQuiz = () => {
       const playerData = JSON.parse(storedPlayer);
       setPlayerNickname(playerData.nickname);
     }
-    
-    // Fetch quiz data
     fetchQuizData();
-    
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [quizId]);
   
-  // Mock fetch quiz data
-  const fetchQuizData = () => {
-    // Simulate API call
-    setTimeout(() => {
-      const mockQuizData = {
-        id: quizId,
-        title: 'Science Quiz: The Basics',
-        description: 'Test your knowledge of fundamental scientific concepts.',
-        settings: {
-          timeLimit: 20,
-          showAnswers: true,
-          randomizeQuestions: false
-        },
-        questions: [
-          {
-            id: 'q1',
-            text: 'What is the chemical symbol for water?',
-            type: 'multiple',
-            timeLimit: 20,
-            points: 100,
-            options: [
-              { id: 'o1', text: 'H2O', isCorrect: true },
-              { id: 'o2', text: 'CO2', isCorrect: false },
-              { id: 'o3', text: 'O2', isCorrect: false },
-              { id: 'o4', text: 'NaCl', isCorrect: false }
-            ]
-          },
-          {
-            id: 'q2',
-            text: 'Which planet is known as the Red Planet?',
-            type: 'multiple',
-            timeLimit: 15,
-            points: 100,
-            options: [
-              { id: 'o1', text: 'Venus', isCorrect: false },
-              { id: 'o2', text: 'Mars', isCorrect: true },
-              { id: 'o3', text: 'Jupiter', isCorrect: false },
-              { id: 'o4', text: 'Saturn', isCorrect: false }
-            ]
-          },
-          {
-            id: 'q3',
-            text: 'What is the largest organ in the human body?',
-            type: 'multiple',
-            timeLimit: 15,
-            points: 100,
-            options: [
-              { id: 'o1', text: 'Heart', isCorrect: false },
-              { id: 'o2', text: 'Liver', isCorrect: false },
-              { id: 'o3', text: 'Skin', isCorrect: true },
-              { id: 'o4', text: 'Brain', isCorrect: false }
-            ]
-          },
-          {
-            id: 'q4',
-            text: 'What is the process by which plants make their own food using sunlight?',
-            type: 'multiple',
-            timeLimit: 20,
-            points: 150,
-            options: [
-              { id: 'o1', text: 'Photosynthesis', isCorrect: true },
-              { id: 'o2', text: 'Respiration', isCorrect: false },
-              { id: 'o3', text: 'Digestion', isCorrect: false },
-              { id: 'o4', text: 'Transpiration', isCorrect: false }
-            ]
-          },
-          {
-            id: 'q5',
-            text: 'Which of these is NOT a state of matter?',
-            type: 'multiple',
-            timeLimit: 20,
-            points: 150,
-            options: [
-              { id: 'o1', text: 'Solid', isCorrect: false },
-              { id: 'o2', text: 'Liquid', isCorrect: false },
-              { id: 'o3', text: 'Gas', isCorrect: false },
-              { id: 'o4', text: 'Energy', isCorrect: true }
-            ]
-          }
-        ]
-      };
-      
-      setQuizData(mockQuizData);
-      startQuestion(0, mockQuizData);
-    }, 1000);
+  // Fetch quiz data from the server
+  const fetchQuizData = async () => {
+    try {
+      const response = await fetch(`http://localhost:5001/api/quiz/id/${quizId}`);
+      if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+
+      const data = await response.json();
+      if (data.success) {
+        setQuizData(data.quiz);
+        startQuestion(0, data.quiz);
+      } else {
+        console.error("Error fetching quiz:", data.error);
+      }
+    } catch (error) {
+      console.error("Failed to fetch quiz data:", error);
+    }
   };
   
   // Start a question with timer
@@ -125,8 +53,8 @@ const PlayQuiz = () => {
     if (!quiz || !quiz.questions[index]) return;
     
     const question = quiz.questions[index];
-    const questionTime = question.timeLimit || quiz.settings.timeLimit;
-    
+    const questionTime = question.timeLimit || quiz.timeLimit; // Adjusted to use quiz timeLimit
+
     setIsAnswered(false);
     setSelectedOption(null);
     setShowAnswer(false);
@@ -150,45 +78,50 @@ const PlayQuiz = () => {
   // Handle option selection
   const handleOptionSelect = (optionId) => {
     if (isAnswered) return;
-    
+  
     const currentQuestion = quizData.questions[currentQuestionIndex];
-    const selectedOpt = currentQuestion.options.find(o => o.id === optionId);
-    
+  
+    // Get the selected option value from the options array using the optionId
+    const selectedOpt = currentQuestion.options[optionId];
+  
+    if (!selectedOpt) {
+      console.error("Selected option not found!");
+      return;
+    }
+  
     setSelectedOption(optionId);
     setIsAnswered(true);
-    
+  
+    // Determine if the selected option is correct
+    const isCorrect = currentQuestion.correctAnswer === optionId;
+  
     // Calculate score based on time left
     let questionScore = 0;
-    if (selectedOpt.isCorrect) {
+    if (isCorrect) {
       const timeBonus = Math.floor((timeLeft / currentQuestion.timeLimit) * 50);
       questionScore = currentQuestion.points + timeBonus;
       setScore(prevScore => prevScore + questionScore);
     }
-    
+  
     // Record answer
     setPlayerAnswers(prev => [
       ...prev, 
       {
-        questionId: currentQuestion.id,
+        questionId: currentQuestion._id, // Adjusted to use question's _id
         selectedOptionId: optionId,
-        isCorrect: selectedOpt.isCorrect,
+        isCorrect: isCorrect,
         timeLeft,
         score: questionScore
       }
     ]);
-    
+  
     // Show answer if enabled in settings
-    if (quizData.settings.showAnswers) {
-      setShowAnswer(true);
-      
-      // Proceed to next question after delay
-      setTimeout(() => {
-        goToNextQuestion();
-      }, 3000);
-    } else {
-      // Proceed immediately
+    setShowAnswer(true);
+  
+    // Proceed to next question after delay
+    setTimeout(() => {
       goToNextQuestion();
-    }
+    }, 3000);
   };
   
   // Handle timeout when no answer is selected
@@ -201,7 +134,7 @@ const PlayQuiz = () => {
     setPlayerAnswers(prev => [
       ...prev, 
       {
-        questionId: currentQuestion.id,
+        questionId: currentQuestion._id, // Adjusted to use question's _id
         selectedOptionId: null,
         isCorrect: false,
         timeLeft: 0,
@@ -209,18 +142,13 @@ const PlayQuiz = () => {
       }
     ]);
     
-    // Show correct answer if enabled
-    if (quizData.settings.showAnswers) {
-      setShowAnswer(true);
-      
-      // Proceed to next question after delay
-      setTimeout(() => {
-        goToNextQuestion();
-      }, 3000);
-    } else {
-      // Proceed immediately
+    // Show correct answer
+    setShowAnswer(true);
+    
+    // Proceed to next question after delay
+    setTimeout(() => {
       goToNextQuestion();
-    }
+    }, 3000);
   };
   
   // Go to next question or end quiz
@@ -280,7 +208,6 @@ const PlayQuiz = () => {
   }
   
   const currentQuestion = quizData.questions[currentQuestionIndex];
-  const correctOption = currentQuestion.options.find(o => o.isCorrect);
   
   return (
     <div className="play-quiz">
@@ -315,29 +242,29 @@ const PlayQuiz = () => {
             <h2 className="question-text">{currentQuestion.text}</h2>
             
             <div className="options-grid">
-              {currentQuestion.options.map((option) => (
+              {currentQuestion.options.map((option, index) => (
                 <button
-                  key={option.id}
-                  className={`option-button ${selectedOption === option.id ? 'selected' : ''} ${
+                  key={index}
+                  className={`option-button ${selectedOption === index ? 'selected' : ''} ${
                     showAnswer 
-                      ? option.isCorrect 
+                      ? index === currentQuestion.correctAnswer
                         ? 'correct' 
-                        : selectedOption === option.id 
+                        : selectedOption === index 
                           ? 'incorrect' 
                           : ''
                       : ''
                   }`}
-                  onClick={() => handleOptionSelect(option.id)}
+                  onClick={() => handleOptionSelect(index)}
                   disabled={isAnswered}
                 >
-                  {option.text}
+                  {option}
                 </button>
               ))}
             </div>
             
             {showAnswer && (
               <div className="answer-feedback">
-                {selectedOption && correctOption.id === selectedOption ? (
+                {selectedOption !== null && currentQuestion.correctAnswer === selectedOption ? (
                   <div className="correct-answer">
                     <span className="feedback-icon">✓</span>
                     <span>Correct! +{playerAnswers[playerAnswers.length - 1].score} points</span>
@@ -346,9 +273,9 @@ const PlayQuiz = () => {
                   <div className="wrong-answer">
                     <span className="feedback-icon">✗</span>
                     <span>
-                      {selectedOption
-                        ? `Incorrect. The correct answer is: ${correctOption.text}`
-                        : `Time's up! The correct answer is: ${correctOption.text}`}
+                      {selectedOption !== null
+                        ? `Incorrect. The correct answer is: ${currentQuestion.options[currentQuestion.correctAnswer]}`
+                        : `Time's up! The correct answer is: ${currentQuestion.options[currentQuestion.correctAnswer]}`}
                     </span>
                   </div>
                 )}
@@ -373,6 +300,6 @@ const PlayQuiz = () => {
       )}
     </div>
   );
-};
+};  
 
 export default PlayQuiz;

@@ -94,7 +94,7 @@ class LobbyManager {
 
         // Only preload lobbies that are still 'waiting' (game not started)
         auto cursor = collection.find(bsoncxx::builder::stream::document{} 
-           // << "status" << "waiting"
+            << "status" << "waiting"
             << bsoncxx::builder::stream::finalize);
 
         for (auto&& doc : cursor) {
@@ -124,17 +124,9 @@ class LobbyManager {
         std::cerr << "❌ Error preloading lobbies: " << e.what() << std::endl;
     }
 }
-#include <boost/beast.hpp>
-#include <boost/asio.hpp>
-#include <mongocxx/client.hpp>
-#include <bsoncxx/json.hpp>
-#include <mutex>
-#include <thread>
 
-namespace net = boost::asio;
-using tcp = net::ip::tcp;
-namespace beast = boost::beast;
-namespace websocket = beast::websocket;
+
+
 
 void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
     try {
@@ -150,11 +142,9 @@ void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
                     websocket::stream<tcp::socket> ws{std::move(socket)};
                     ws.accept();
 
-                    // Read initial message
                     beast::flat_buffer buffer;
                     ws.read(buffer);
                     
-                    // Parse initial join message
                     auto doc = bsoncxx::from_json(beast::buffers_to_string(buffer.data()));
                     auto view = doc.view();
                     
@@ -196,7 +186,7 @@ void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
                             std::cerr << "DB update error: " << e.what() << std::endl;
                         }
 
-                        // Broadcast player join
+                        // Broadcast update
                         auto response = bsoncxx::builder::stream::document{}
                             << "action" << "player_joined"
                             << "lobby_id" << lobby_id
@@ -212,28 +202,11 @@ void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
                         
                         lobby->broadcast(bsoncxx::to_json(response));
 
-                        // Message handling loop
+                        // Keep connection alive
                         try {
                             while(true) {
                                 beast::flat_buffer loop_buffer;
                                 player_ws->read(loop_buffer);
-                                
-                                // Parse incoming message
-                                auto loop_doc = bsoncxx::from_json(
-                                    beast::buffers_to_string(loop_buffer.data())
-                                );
-                                auto loop_view = loop_doc.view();
-                                std::string loop_action = std::string(loop_view["action"].get_string().value);
-
-                                if(loop_action == "start_game") {
-                                    // Verify host privileges if needed
-                                    auto start_response = bsoncxx::builder::stream::document{}
-                                        << "action" << "start_game"
-                                        << "lobby_id" << lobby_id
-                                        << bsoncxx::builder::stream::finalize;
-
-                                    lobby->broadcast(bsoncxx::to_json(start_response));
-                                }
                             }
                         } catch(const beast::system_error& se) {
                             if(se.code() == websocket::error::closed) {
@@ -261,7 +234,6 @@ void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
                                     std::cerr << "DB update error: " << e.what() << std::endl;
                                 }
 
-                                // Broadcast player leave
                                 auto leave_response = bsoncxx::builder::stream::document{}
                                     << "action" << "player_left"
                                     << "lobby_id" << lobby_id
@@ -274,17 +246,19 @@ void run_websocket_server(LobbyManager& lobby_manager, unsigned short port) {
                                         }
                                     << bsoncxx::builder::stream::close_array
                                     << bsoncxx::builder::stream::finalize;
-
+                                
                                 lobby->broadcast(bsoncxx::to_json(leave_response));
                             }
                         }
                     }
-                } catch(const std::exception& e) {
+                } 
+                catch(const std::exception& e) {
                     std::cerr << "WebSocket error: " << e.what() << std::endl;
                 }
             }).detach();
         }
-    } catch(const std::exception& e) {
+    } 
+    catch(const std::exception& e) {
         std::cerr << "WebSocket server error: " << e.what() << std::endl;
     }
 }
@@ -447,7 +421,104 @@ int main() {
             res.set_content(std::string(R"({"success": false, "error": ")") + e.what() + R"("})", "application/json");
         }
     });
-
+    svr.Post("/api/lobbies/:lobby_code/submit-score", [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string lobby_code = req.matches[1];
+            auto doc = bsoncxx::from_json(req.body);
+            auto view = doc.view();
+    
+            // Validate required fields
+            if (!view["nickname"] || view["nickname"].type() != bsoncxx::type::k_string ||
+                !view["score"] || view["score"].type() != bsoncxx::type::k_int32) {
+                res.status = 400;
+                res.set_content(R"({"success": false, "error": "Missing or invalid nickname/score"})", "application/json");
+                return;
+            }
+    
+            // Get values without unnecessary conversions
+            std::string nickname = std::string(view["nickname"].get_string().value);
+            int score = view["score"].get_int32().value;
+    
+            mongocxx::client client{mongocxx::uri{MONGODB_URI}};
+            auto collection = client["Quiz_App_DB"]["QuizResults"];
+    
+            // Check if lobby exists
+            bool lobby_exists = collection.count_documents(
+                bsoncxx::builder::basic::make_document(
+                    bsoncxx::builder::basic::kvp("lobbyCode", lobby_code)
+                )
+            ) > 0;
+    
+            if (!lobby_exists) {
+                // Create new document
+                auto new_doc = bsoncxx::builder::basic::document{};
+                new_doc.append(
+                    bsoncxx::builder::basic::kvp("lobbyCode", lobby_code),
+                    bsoncxx::builder::basic::kvp("scores", [&](bsoncxx::builder::basic::sub_array array) {
+                        array.append([&](bsoncxx::builder::basic::sub_document subdoc) {
+                            subdoc.append(
+                                bsoncxx::builder::basic::kvp("nickname", nickname),
+                                bsoncxx::builder::basic::kvp("score", score)
+                            );
+                        });
+                    })
+                );
+    
+                auto result = collection.insert_one(new_doc.view());
+                if (!result) {
+                    throw std::runtime_error("Insertion failed");
+                }
+            } else {
+                // Try to update existing player's score
+                auto update_result = collection.update_one(
+                    bsoncxx::builder::basic::make_document(
+                        bsoncxx::builder::basic::kvp("lobbyCode", lobby_code),
+                        bsoncxx::builder::basic::kvp("scores.nickname", nickname)
+                    ),
+                    bsoncxx::builder::basic::make_document(
+                        bsoncxx::builder::basic::kvp("$set", 
+                            bsoncxx::builder::basic::make_document(
+                                bsoncxx::builder::basic::kvp("scores.$.score", score)
+                            )
+                        )
+                    )
+                );
+    
+                // If player not found, add new score
+                if (update_result->modified_count() == 0) {
+                    collection.update_one(
+                        bsoncxx::builder::basic::make_document(
+                            bsoncxx::builder::basic::kvp("lobbyCode", lobby_code)
+                        ),
+                        bsoncxx::builder::basic::make_document(
+                            bsoncxx::builder::basic::kvp("$push",
+                                bsoncxx::builder::basic::make_document(
+                                    bsoncxx::builder::basic::kvp("scores",
+                                        bsoncxx::builder::basic::make_document(
+                                            bsoncxx::builder::basic::kvp("nickname", nickname),
+                                            bsoncxx::builder::basic::kvp("score", score)
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    );
+                }
+            }
+    
+            // Return success
+            res.set_content(R"({"success": true})", "application/json");
+    
+        } catch (const std::exception& e) {
+            res.status = 500;
+            auto error = bsoncxx::builder::basic::document{};
+            error.append(
+                bsoncxx::builder::basic::kvp("success", false),
+                bsoncxx::builder::basic::kvp("error", e.what())
+            );
+            res.set_content(bsoncxx::to_json(error.view()), "application/json");
+        }
+    });
     std::cout << "HTTP Server running on http://localhost:5001\n";
     std::cout << "WebSocket Server running on ws://localhost:9002\n";
     

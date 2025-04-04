@@ -120,13 +120,6 @@ const Dashboard = () => {
         </Link>
       </div>
 
-      <div className="stats-overview">
-        <div className="stat-card"><h3>{stats.totalQuizzes}</h3><p>Quizzes Created</p></div>
-        <div className="stat-card"><h3>{stats.totalPlays}</h3><p>Total Plays</p></div>
-        <div className="stat-card"><h3>{stats.totalPlayers}</h3><p>Total Players</p></div>
-        <div className="stat-card"><h3>{stats.averageScore}%</h3><p>Average Score</p></div>
-      </div>
-
       <section className="dashboard-section">
         <div className="section-header">
           <h2>My Quizzes</h2>

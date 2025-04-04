@@ -17,87 +17,99 @@ const QuizResults = () => {
   const [leaderboard, setLeaderboard] = useState([]);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    const fetchLobbyData = async () => {
-      try {
-        // First validate we have a lobbyCode
-        if (!lobbyCode || lobbyCode.length !== 6) {
-          throw new Error('Invalid lobby code format');
-        }
-
-        // Get player info from session storage
-        const playerData = JSON.parse(sessionStorage.getItem('quizzlyPlayer')) || {};
-        const playerNickname = playerData.nickname || 'You';
-
-        // If we have state from navigation (coming from game), use it
-        if (location.state) {
-          setResults(prev => ({
-            ...prev,
-            score: location.state.score || 0,
-            answers: location.state.answers,
-            totalQuestions: location.state.totalQuestions,
-            quizTitle: location.state.quizTitle || `Lobby ${lobbyCode}`,
-            playerNickname
-          }));
-        } else {
-          setResults(prev => ({
-            ...prev,
-            playerNickname,
-            quizTitle: `Lobby ${lobbyCode}`
-          }));
-        }
-
-        // Fetch lobby results from backend
-        const response = await fetch(`http://localhost:5001/api/results/${lobbyCode}`);
-        
-        if (!response.ok) {
-          throw new Error(`Failed to fetch lobby data: ${response.status}`);
-        }
-
-        const data = await response.json();
-        
-        if (!data.success) {
-          throw new Error(data.error || 'Failed to load lobby data');
-        }
-
-        // Process scores from backend
-        const scores = data.data.scores || [];
-        const formattedLeaderboard = scores
-          .map(entry => ({
-            nickname: entry.nickname,
-            score: entry.score,
-            isCurrentPlayer: entry.nickname === playerNickname
-          }))
-          .sort((a, b) => b.score - a.score)
-          .map((player, index) => ({
-            ...player,
-            rank: index + 1
-          }));
-
-        setLeaderboard(formattedLeaderboard);
-
-        // Update current player's score if not set from location.state
-        if (!location.state?.score) {
-          const playerEntry = formattedLeaderboard.find(p => p.isCurrentPlayer);
-          if (playerEntry) {
+  
+    useEffect(() => {
+      let intervalId;
+      const pollingInterval = 7000; // 3 seconds
+    
+      const fetchLobbyData = async () => {
+        try {
+          // First validate we have a lobbyCode
+          if (!lobbyCode || lobbyCode.length !== 6) {
+            throw new Error('Invalid lobby code format');
+          }
+    
+          // Get player info from session storage
+          const playerData = JSON.parse(sessionStorage.getItem('quizzlyPlayer')) || {};
+          const playerNickname = playerData.nickname || 'You';
+    
+          // Only set state from navigation on initial load
+          if (location.state && !results.score) {
             setResults(prev => ({
               ...prev,
-              score: playerEntry.score
+              score: location.state.score || 0,
+              answers: location.state.answers,
+              totalQuestions: location.state.totalQuestions,
+              quizTitle: location.state.quizTitle || `Lobby ${lobbyCode}`,
+              playerNickname
+            }));
+          } else if (!results.playerNickname) {
+            setResults(prev => ({
+              ...prev,
+              playerNickname,
+              quizTitle: `Lobby ${lobbyCode}`
             }));
           }
+    
+          // Fetch lobby results from backend
+          const response = await fetch(`http://localhost:5001/api/results/${lobbyCode}`);
+          
+          if (!response.ok) {
+            throw new Error(`Failed to fetch lobby data: ${response.status}`);
+          }
+    
+          const data = await response.json();
+          
+          if (!data.success) {
+            throw new Error(data.error || 'Failed to load lobby data');
+          }
+    
+          // Process scores from backend
+          const scores = data.data.scores || [];
+          const formattedLeaderboard = scores
+            .map(entry => ({
+              nickname: entry.nickname,
+              score: entry.score,
+              isCurrentPlayer: entry.nickname === (results.playerNickname || playerNickname)
+            }))
+            .sort((a, b) => b.score - a.score)
+            .map((player, index) => ({
+              ...player,
+              rank: index + 1
+            }));
+    
+          setLeaderboard(formattedLeaderboard);
+    
+          // Update current player's score if not set from location.state
+          if (!location.state?.score) {
+            const playerEntry = formattedLeaderboard.find(p => p.isCurrentPlayer);
+            if (playerEntry) {
+              setResults(prev => ({
+                ...prev,
+                score: playerEntry.score
+              }));
+            }
+          }
+    
+        } catch (err) {
+          console.error('Error loading lobby results:', err);
+          setError(err.message);
+          // Don't stop polling on error - try again next interval
         }
-
-      } catch (err) {
-        console.error('Error loading lobby results:', err);
-        setError(err.message);
-      } finally {
+      };
+    
+      // Initial fetch
+      fetchLobbyData().finally(() => {
         setLoading(false);
-      }
-    };
-
-    fetchLobbyData();
-  }, [lobbyCode, location.state]);
-
+        // Start polling after initial load
+        intervalId = setInterval(fetchLobbyData, pollingInterval);
+      });
+    
+      // Cleanup interval on unmount
+      return () => {
+        if (intervalId) clearInterval(intervalId);
+      };
+    }, [lobbyCode, location.state, results.playerNickname, results.score]);
   // Calculate player's rank
   const playerRank = leaderboard.findIndex(p => p.isCurrentPlayer) + 1 || null;
 

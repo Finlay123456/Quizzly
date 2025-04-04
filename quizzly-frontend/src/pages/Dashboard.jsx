@@ -163,7 +163,7 @@ const Dashboard = () => {
                   <Link to={`/edit-quiz/${quiz.id}`} className="btn btn-sm btn-outline">
                     Edit
                   </Link>
-                  <button className="btn btn-sm btn-outline">Share</button>
+                
                 </div>
               </div>
             ))}

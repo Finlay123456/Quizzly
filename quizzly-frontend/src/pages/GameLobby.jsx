@@ -121,7 +121,7 @@ const GameLobby = () => {
       setCountdown(prev => {
         if (prev <= 1) {
           clearInterval(timer);
-          navigate(`/play/${quizId}/${lobbyCode}`);
+          navigate(`/play-quiz/${quizId}/${lobbyCode}`);
           return 0;
         }
         return prev - 1;

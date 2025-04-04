@@ -5,6 +5,8 @@ import './PlayQuiz.css';
 const PlayQuiz = () => {
   const { id: quizId } = useParams();
   const navigate = useNavigate();
+  
+  // State
   const [quizData, setQuizData] = useState(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState(null);
@@ -15,8 +17,21 @@ const PlayQuiz = () => {
   const [playerAnswers, setPlayerAnswers] = useState([]);
   const [gameStatus, setGameStatus] = useState('playing');
   const [playerNickname, setPlayerNickname] = useState('');
-  const timerRef = useRef(null);
   
+  // Refs
+  const timerRef = useRef(null);
+  const quizDataRef = useRef();
+  const currentQuestionIndexRef = useRef();
+  const navigationTimeoutRef = useRef();
+  const isAnsweredRef = useRef();
+
+  // Sync refs with state
+  useEffect(() => {
+    quizDataRef.current = quizData;
+    currentQuestionIndexRef.current = currentQuestionIndex;
+    isAnsweredRef.current = isAnswered;
+  }, [quizData, currentQuestionIndex, isAnswered]);
+
   // Load player info and quiz data
   useEffect(() => {
     const storedPlayer = sessionStorage.getItem('quizzlyPlayer');
@@ -25,11 +40,13 @@ const PlayQuiz = () => {
       setPlayerNickname(playerData.nickname);
     }
     fetchQuizData();
+    
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      clearInterval(timerRef.current);
+      clearTimeout(navigationTimeoutRef.current);
     };
   }, [quizId]);
-  
+
   // Fetch quiz data from the server
   const fetchQuizData = async () => {
     try {
@@ -47,53 +64,64 @@ const PlayQuiz = () => {
       console.error("Failed to fetch quiz data:", error);
     }
   };
-  
+
   // Start a question with timer
   const startQuestion = (index, quiz = quizData) => {
-    if (!quiz || !quiz.questions[index]) return;
+    const currentQuiz = quiz || quizDataRef.current;
+    if (!currentQuiz?.questions?.[index]) return;
     
-    const question = quiz.questions[index];
-    const questionTime = question.timeLimit || quiz.timeLimit; // Adjusted to use quiz timeLimit
-
+    const question = currentQuiz.questions[index];
+    const questionTime = question.timeLimit || currentQuiz.timeLimit;
+  
     setIsAnswered(false);
     setSelectedOption(null);
     setShowAnswer(false);
     setTimeLeft(questionTime);
     
-    // Start timer
-    if (timerRef.current) clearInterval(timerRef.current);
+    // Clear existing timer
+    clearInterval(timerRef.current);
     
+    // Start new timer
     timerRef.current = setInterval(() => {
       setTimeLeft(prevTime => {
         if (prevTime <= 1) {
           clearInterval(timerRef.current);
-          if (!isAnswered) handleTimeout();
+          if (!isAnsweredRef.current) {
+            const currentQ = quizDataRef.current?.questions?.[currentQuestionIndexRef.current];
+            if (currentQ) {
+              handleTimeout(currentQ);
+            }
+          }
           return 0;
         }
         return prevTime - 1;
       });
     }, 1000);
   };
-  
+
   // Handle option selection
   const handleOptionSelect = (optionId) => {
-    if (isAnswered) return;
-  
-    const currentQuestion = quizData.questions[currentQuestionIndex];
-  
-    // Get the selected option value from the options array using the optionId
-    const selectedOpt = currentQuestion.options[optionId];
-  
-    if (!selectedOpt) {
-      console.error("Selected option not found!");
-      return;
+    if (isAnsweredRef.current) return;
+
+    const currentQIndex = currentQuestionIndexRef.current;
+    const currentQuestion = quizDataRef.current?.questions?.[currentQIndex];
+    if (!currentQuestion) return;
+    
+    // For timeout case (optionId 5), we don't need to check the option
+    if (optionId !== 5) {
+      const selectedOpt = currentQuestion.options[optionId];
+      if (!selectedOpt) {
+        console.error("Selected option not found!");
+        return;
+      }
     }
   
     setSelectedOption(optionId);
     setIsAnswered(true);
   
     // Determine if the selected option is correct
-    const isCorrect = currentQuestion.correctAnswer === optionId;
+    // Option 5 will always be incorrect since it's not a real option
+    const isCorrect = optionId !== 5 && currentQuestion.correctAnswer === optionId;
   
     // Calculate score based on time left
     let questionScore = 0;
@@ -107,7 +135,7 @@ const PlayQuiz = () => {
     setPlayerAnswers(prev => [
       ...prev, 
       {
-        questionId: currentQuestion._id, // Adjusted to use question's _id
+        questionId: currentQuestion._id,
         selectedOptionId: optionId,
         isCorrect: isCorrect,
         timeLeft,
@@ -115,27 +143,28 @@ const PlayQuiz = () => {
       }
     ]);
   
-    // Show answer if enabled in settings
+    // Show answer
     setShowAnswer(true);
   
+    // Clear any existing navigation timeout
+    clearTimeout(navigationTimeoutRef.current);
     // Proceed to next question after delay
-    setTimeout(() => {
-      goToNextQuestion();
-    }, 3000);
+    navigationTimeoutRef.current = setTimeout(goToNextQuestion, 3000);
   };
-  
+
   // Handle timeout when no answer is selected
-  const handleTimeout = () => {
-    const currentQuestion = quizData.questions[currentQuestionIndex];
+  const handleTimeout = (currentQuestion) => {
+    if (!currentQuestion) return;
     
     setIsAnswered(true);
+    setSelectedOption(5);
     
     // Record answer as timeout
     setPlayerAnswers(prev => [
       ...prev, 
       {
-        questionId: currentQuestion._id, // Adjusted to use question's _id
-        selectedOptionId: null,
+        questionId: currentQuestion._id,
+        selectedOptionId: 5,
         isCorrect: false,
         timeLeft: 0,
         score: 0
@@ -145,17 +174,18 @@ const PlayQuiz = () => {
     // Show correct answer
     setShowAnswer(true);
     
+    // Clear any existing navigation timeout
+    clearTimeout(navigationTimeoutRef.current);
     // Proceed to next question after delay
-    setTimeout(() => {
-      goToNextQuestion();
-    }, 3000);
+    navigationTimeoutRef.current = setTimeout(goToNextQuestion, 3000);
   };
-  
+
   // Go to next question or end quiz
   const goToNextQuestion = () => {
-    const nextIndex = currentQuestionIndex + 1;
+    const nextIndex = currentQuestionIndexRef.current + 1;
+    const questions = quizDataRef.current?.questions || [];
     
-    if (nextIndex < quizData.questions.length) {
+    if (nextIndex < questions.length) {
       setCurrentQuestionIndex(nextIndex);
       startQuestion(nextIndex);
     } else {
@@ -167,38 +197,34 @@ const PlayQuiz = () => {
       saveResults();
     }
   };
-  
+
   // Save quiz results
   const saveResults = () => {
-    // In a real app, send results to server
-    console.log('Quiz completed with score:', score);
-    console.log('Player answers:', playerAnswers);
+    const results = {
+      score, 
+      answers: playerAnswers,
+      totalQuestions: quizDataRef.current?.questions?.length || 0,
+      quizTitle: quizDataRef.current?.title || ''
+    };
     
     // Navigate to results page after a delay
-    setTimeout(() => {
-      navigate(`/results/${quizId}`, { 
-        state: { 
-          score, 
-          answers: playerAnswers,
-          totalQuestions: quizData.questions.length,
-          quizTitle: quizData.title
-        } 
-      });
+    navigationTimeoutRef.current = setTimeout(() => {
+      navigate(`/results/${quizId}`, { state: results });
     }, 3000);
   };
-  
+
   // Format time
   const formatTime = (seconds) => {
     return `${seconds}s`;
   };
-  
+
   // Calculate progress
   const calculateProgress = () => {
-    if (!quizData) return 0;
-    return ((currentQuestionIndex) / quizData.questions.length) * 100;
+    const total = quizDataRef.current?.questions?.length || 1;
+    return (currentQuestionIndexRef.current / total) * 100;
   };
-  
-  if (!quizData) {
+
+  if (!quizData || !quizData.questions) {
     return (
       <div className="quiz-loading">
         <div className="spinner"></div>
@@ -206,9 +232,9 @@ const PlayQuiz = () => {
       </div>
     );
   }
-  
+
   const currentQuestion = quizData.questions[currentQuestionIndex];
-  
+
   return (
     <div className="play-quiz">
       {gameStatus === 'playing' && (
@@ -300,6 +326,6 @@ const PlayQuiz = () => {
       )}
     </div>
   );
-};  
+};
 
 export default PlayQuiz;

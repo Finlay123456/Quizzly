@@ -204,9 +204,6 @@ const GameLobby = () => {
                 <div className="player-name">
                   {player.nickname} {player.isYou && <span className="you-badge">(You)</span>}
                 </div>
-                <div className="player-status">
-                  {player.isReady ? 'Ready ✓' : 'Not Ready...'}
-                </div>
               </div>
             ))}
           </div>

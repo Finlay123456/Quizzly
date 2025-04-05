@@ -55,7 +55,7 @@ const PlayQuiz = () => {
   // Fetch quiz data from the server
   const fetchQuizData = async () => {
     try {
-      const response = await fetch(`http://localhost:5001/api/quiz/id/${quizId}`);
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/quiz/id/${quizId}`);
       if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
 
       const data = await response.json();
@@ -220,7 +220,7 @@ const PlayQuiz = () => {
     try {
       // Only proceed if we have a valid lobby code
       if (lobbyCode && lobbyCode.length === 6) {
-        const response = await fetch(`http://localhost:5001/api/lobbies/${lobbyCode}/submit-score`, {
+        const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/lobbies/${lobbyCode}/submit-score`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
